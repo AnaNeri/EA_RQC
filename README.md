@@ -32,7 +32,7 @@ pip install -e .[test]
 Run the example in `demo/map_demo.py`:
 
 ```bash
-python demo/map_demo.py
+python -m demo.map_demo
 ```
 
 The demo prints:
@@ -42,6 +42,21 @@ The demo prints:
 - The final ranked population.
 - The number of generations executed.
 
+Run the circuit-level intermediate demo in `demo/circuit_demo.py`:
+
+```bash
+python -m demo.circuit_demo
+```
+
+This demo prints intermediate checkpoints:
+
+- Shared structure anchors detected between parent circuits.
+- Children produced by probabilistic anchor crossover.
+- Mutation result.
+- Graph projection from list-based circuit representation.
+- Multi-objective fitness breakdown.
+- Generation-by-generation diversity for circuit EA.
+
 ## Run tests
 
 ```bash
@@ -50,7 +65,9 @@ pytest
 
 ## Main API
 
-The main orchestration function is `map.evolutionary_mapping.evolutionary_best_clusters`.
+The main orchestration function is `evolution.cluster.evolutionary.evolutionary_best_clusters`.
+
+Circuit-level orchestration is available in `evolution.circuit.evolutionary.evolutionary_best_circuit`.
 
 Important parameters:
 
@@ -70,9 +87,9 @@ Return value includes the final population and fitness values, plus the best clu
 
 ## Project structure
 
-- `map/`: evolutionary mapping implementation and operators.
+- `evolution/`: canonical evolutionary algorithm implementation.
 - `circuit/`: circuit and noise entities.
-- `parser/`: input conversion utilities (including Qiskit adapters).
+- `adapters/`: canonical integration layer (including Qiskit adapters).
 - `demo/`: runnable demonstration script.
 - `tests/`: test suite.
 

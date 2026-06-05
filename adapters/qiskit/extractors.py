@@ -123,3 +123,78 @@ def extract_single_qubit_gate_data(properties: Any, num_qubits: int) -> dict[int
             gate_data[qubit]["gate_time_avg"] /= time_count
 
     return gate_data
+
+
+def extract_backend_base_gates(
+    backend: Any,
+    properties: Any | None = None,
+    *,
+    include_non_unitary: bool = False,
+) -> list[str]:
+    """Extract gate names directly from backend metadata.
+
+    Sources are consulted in order:
+    1) configuration().basis_gates
+    2) target.operation_names
+    3) backend.operation_names
+    4) properties.gates[*].name
+    """
+
+    names: list[str] = []
+
+    configuration = getattr(backend, "configuration", None)
+    if callable(configuration):
+        try:
+            config = configuration()
+            basis = getattr(config, "basis_gates", None)
+            if isinstance(basis, (list, tuple, set)):
+                names.extend(str(item) for item in basis if item is not None)
+        except Exception:
+            pass
+
+    target = getattr(backend, "target", None)
+    if target is not None:
+        operation_names = getattr(target, "operation_names", None)
+        if callable(operation_names):
+            try:
+                operation_names = operation_names()
+            except TypeError:
+                operation_names = None
+        if isinstance(operation_names, (list, tuple, set)):
+            names.extend(str(item) for item in operation_names if item is not None)
+
+    backend_operation_names = getattr(backend, "operation_names", None)
+    if callable(backend_operation_names):
+        try:
+            backend_operation_names = backend_operation_names()
+        except TypeError:
+            backend_operation_names = None
+    if isinstance(backend_operation_names, (list, tuple, set)):
+        names.extend(str(item) for item in backend_operation_names if item is not None)
+
+    if properties is None:
+        properties_fn = getattr(backend, "properties", None)
+        if callable(properties_fn):
+            try:
+                properties = properties_fn()
+            except Exception:
+                properties = None
+
+    if properties is not None and hasattr(properties, "gates"):
+        try:
+            gates = list(properties.gates)
+        except Exception:
+            gates = []
+        for gate in gates:
+            gate_name = getattr(gate, "name", None)
+            if gate_name:
+                names.append(str(gate_name))
+
+    normalized = [name.lower().strip() for name in names if str(name).strip()]
+
+    if not include_non_unitary:
+        excluded = {"measure", "barrier", "delay", "reset", "snapshot"}
+        normalized = [name for name in normalized if name not in excluded]
+
+    unique = list(dict.fromkeys(normalized))
+    return unique

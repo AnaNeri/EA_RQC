@@ -1,4 +1,4 @@
-"""Genetic operators and population generation."""
+"""Genetic operators and population generation for cluster EA."""
 
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ def fitness(
     else:
         penalty = qubit_penalty
 
-    # Normalise to the interval [0, 1], where zero penalty maps to 1.0.
     return 1.0 / (1.0 + max(penalty, 0.0))
 
 

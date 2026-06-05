@@ -17,8 +17,19 @@ from .channels import (
     thermal_dephasing_model,
     thermal_probability,
 )
-from .extractors import backend_name, backend_num_qubits, backend_version, extract_qubit_properties, extract_single_qubit_gate_data
+from .extractors import backend_name, backend_num_qubits, backend_version, extract_backend_base_gates, extract_qubit_properties
+from .extractors import extract_single_qubit_gate_data
 from .models import ParsedDeviceNoiseModel, QubitNoiseMap
+
+
+def parse_qiskit_backend_gate_catalog(
+    backend: Any,
+    *,
+    include_non_unitary: bool = False,
+) -> list[str]:
+    """Return gate names supported by the backend for circuit generation."""
+
+    return extract_backend_base_gates(backend, include_non_unitary=include_non_unitary)
 
 
 def parse_qiskit_backend_noise_model(

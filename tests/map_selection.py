@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from map.selection import selection_new_generation, selection_rank
+from evolution.cluster.selection import selection_new_generation, selection_rank
 
 
 class TestSelectionRank:

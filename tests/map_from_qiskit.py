@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from parser.qiskit import (
+from adapters.qiskit import (
     load_noise_model_json,
+    parse_qiskit_backend_gate_catalog,
     parse_qiskit_backend_noise_model,
     save_noise_model_json,
 )
-from parser.from_qiskit import parse_qiskit_backend_noise_model as parse_qiskit_backend_noise_model_legacy
 
 
 @dataclass
@@ -19,6 +19,7 @@ class _Param:
 
 @dataclass
 class _Gate:
+    name: str
     qubits: list[int]
     parameters: list[_Param]
 
@@ -40,6 +41,9 @@ class _Backend:
     backend_version = "1.2.3"
     num_qubits = 2
 
+    class _Configuration:
+        basis_gates = ["id", "rz", "sx", "x", "ecr", "measure", "barrier"]
+
     def __init__(self):
         self._properties = _Properties(
             qubits=[
@@ -58,6 +62,7 @@ class _Backend:
             ],
             gates=[
                 _Gate(
+                    name="sx",
                     qubits=[0],
                     parameters=[
                         _Param("gate_error", 0.001),
@@ -65,6 +70,7 @@ class _Backend:
                     ],
                 ),
                 _Gate(
+                    name="x",
                     qubits=[1],
                     parameters=[
                         _Param("gate_error", 0.002),
@@ -80,13 +86,11 @@ class _Backend:
     def properties(self):
         return self._properties
 
+    def configuration(self):
+        return self._Configuration()
+
 
 class TestFromQiskitParser:
-    def test_legacy_import_alias_is_kept(self):
-        model = parse_qiskit_backend_noise_model_legacy(_Backend(), date="2026-06-04T00:00:00Z")
-
-        assert model.device_name == "FakeBackendForTests"
-
     def test_builds_requested_structure(self):
         model = parse_qiskit_backend_noise_model(_Backend(), date="2026-06-04T00:00:00Z")
 
@@ -130,3 +134,12 @@ class TestFromQiskitParser:
         assert loaded.date == model.date
         assert loaded.qubits.keys() == model.qubits.keys()
         assert loaded.qubit_error_rates.keys() == model.qubit_error_rates.keys()
+
+    def test_extracts_base_gates_from_backend_configuration(self):
+        catalog = parse_qiskit_backend_gate_catalog(_Backend())
+
+        assert "sx" in catalog
+        assert "x" in catalog
+        assert "ecr" in catalog
+        assert "measure" not in catalog
+        assert "barrier" not in catalog

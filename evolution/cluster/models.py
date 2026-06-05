@@ -1,4 +1,4 @@
-"""Data structures used by the evolutionary mapping package."""
+"""Data structures used by the cluster evolutionary search."""
 
 from __future__ import annotations
 

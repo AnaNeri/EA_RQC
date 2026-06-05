@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from map.evolutionary_mapping import evolutionary_best_clusters
+from evolution.cluster.evolutionary import evolutionary_best_clusters
 
 
 class TestEvolutionaryBestClusters:

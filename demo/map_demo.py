@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from tempfile import TemporaryDirectory
 from typing import Sequence
 
-from map.evolutionary_mapping import evolutionary_best_clusters
-from parser.qiskit import load_noise_model_json, parse_qiskit_backend_noise_model, save_noise_model_json
+from adapters.qiskit import load_noise_model_json, parse_qiskit_backend_noise_model, save_noise_model_json
+from evolution.cluster.evolutionary import evolutionary_best_clusters
 
 
 @dataclass(frozen=True)

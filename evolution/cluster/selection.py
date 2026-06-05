@@ -1,4 +1,4 @@
-"""Rank selection and survivor selection."""
+"""Rank selection and survivor selection for cluster EA."""
 
 from __future__ import annotations
 

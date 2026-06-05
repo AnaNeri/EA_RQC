@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from map.models import EvolutionaryMappingResult
+from evolution.cluster.models import EvolutionaryMappingResult
 
 
 class TestEvolutionaryMappingResult:

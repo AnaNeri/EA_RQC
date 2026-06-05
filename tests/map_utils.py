@@ -4,7 +4,7 @@ import random
 
 import pytest
 
-from map.utils import cluster_noise_penalty, normalise_cluster, repair_cluster, topology_penalty
+from evolution.cluster.utils import cluster_noise_penalty, normalise_cluster, repair_cluster, topology_penalty
 
 
 class TestNormaliseCluster:

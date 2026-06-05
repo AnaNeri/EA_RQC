@@ -1,6 +1,6 @@
-"""Mapping utilities for evolutionary qubit clustering."""
+"""Cluster-level evolutionary search."""
 
-from .evolutionary_mapping import evolutionary_best_clusters
+from .evolutionary import evolutionary_best_clusters
 from .models import EvolutionaryMappingResult
 from .operators import crossover, fitness, generate_combinations, mutation
 from .selection import selection_new_generation, selection_rank

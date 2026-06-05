@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from map.operators import crossover, fitness, generate_combinations, mutation
+from evolution.cluster.operators import crossover, fitness, generate_combinations, mutation
 
 
 class TestFitness:
