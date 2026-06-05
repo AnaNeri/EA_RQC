@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ea-rqc"
+version = "0.1.0"
+description = "Evolutionary Algorithm for Robust Quantum Circuits"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["map*", "parser*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["map_*.py"]
