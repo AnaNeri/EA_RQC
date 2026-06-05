@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from circuit.entities.circuit_list import CircuitGate, CircuitList
 from evolution.circuit.fitness import fitness_circuit
+from evolution.circuit.matrix_eval import circuit_to_matrix
 
 
 @dataclass(frozen=True)
@@ -24,9 +25,10 @@ def test_fitness_circuit_returns_bounded_values():
         max_gates=8,
     )
     target = CircuitList(gates=[_gate("x", (0,), 1)], cluster=(0, 1), max_depth=3, max_gates=4)
+    target_matrix = circuit_to_matrix(target, target_kind="unitary")
     noise = FakeNoiseModel(qubit_error_rates={0: 0.01, 1: 0.03})
 
-    breakdown = fitness_circuit(circuit, target=target, noise_model=noise)
+    breakdown = fitness_circuit(circuit, target=None, target_matrix=target_matrix, target_kind="unitary", noise_model=noise)
 
     assert 0.0 <= breakdown.behavior_score <= 1.0
     assert 0.0 <= breakdown.robustness_score <= 1.0
@@ -38,9 +40,10 @@ def test_fitness_circuit_prefers_target_match():
     target = CircuitList(gates=[_gate("x", (0,), 1)], cluster=(0, 1), max_depth=3, max_gates=4)
     perfect = CircuitList(gates=[_gate("x", (0,), 1)], cluster=(0, 1), max_depth=3, max_gates=4)
     mismatch = CircuitList(gates=[_gate("h", (0,), 1), _gate("z", (1,), 2)], cluster=(0, 1), max_depth=3, max_gates=4)
+    target_matrix = circuit_to_matrix(target, target_kind="unitary")
     noise = FakeNoiseModel(qubit_error_rates={0: 0.02, 1: 0.02})
 
-    fit_perfect = fitness_circuit(perfect, target=target, noise_model=noise)
-    fit_mismatch = fitness_circuit(mismatch, target=target, noise_model=noise)
+    fit_perfect = fitness_circuit(perfect, target=None, target_matrix=target_matrix, target_kind="unitary", noise_model=noise)
+    fit_mismatch = fitness_circuit(mismatch, target=None, target_matrix=target_matrix, target_kind="unitary", noise_model=noise)
 
     assert fit_perfect.total_fitness > fit_mismatch.total_fitness

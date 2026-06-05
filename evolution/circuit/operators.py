@@ -110,6 +110,30 @@ def find_anchor_blocks(parent1: CircuitList, parent2: CircuitList) -> list[Ancho
 	return _blocks_from_matches(weighted_lcs_indices(parent1, parent2), parent1, parent2)
 
 
+def _remap_gate_to_cluster(gate: CircuitGate, source_cluster: Sequence[int], target_cluster: Sequence[int]) -> CircuitGate:
+	if tuple(source_cluster) == tuple(target_cluster):
+		return gate
+
+	mapping = {source: target for source, target in zip(source_cluster, target_cluster)}
+	remapped_qubits = tuple(mapping.get(qubit, qubit) for qubit in gate.qubits)
+	return CircuitGate.from_values(
+		name=gate.name,
+		qubits=remapped_qubits,
+		parameters=gate.parameters,
+		depth=gate.depth,
+		immutable=gate.immutable,
+	)
+
+
+def _remap_gates_to_cluster(
+	gates: Sequence[CircuitGate],
+	*,
+	source_cluster: Sequence[int],
+	target_cluster: Sequence[int],
+) -> list[CircuitGate]:
+	return [_remap_gate_to_cluster(gate, source_cluster, target_cluster) for gate in gates]
+
+
 def probabilistic_anchor_crossover(
 	parent1: CircuitList,
 	parent2: CircuitList,
@@ -126,7 +150,11 @@ def probabilistic_anchor_crossover(
 
 	rng = _as_rng(seed)
 	if rng.random() > crossover_rate:
-		return parent1.clone(), parent2.clone()
+		child1 = parent1.clone()
+		child2 = parent2.clone()
+		child1.crop_to_limits()
+		child2.crop_to_limits()
+		return child1, child2
 
 	matches = weighted_lcs_indices(parent1, parent2)
 	blocks = _blocks_from_matches(matches, parent1, parent2)
@@ -135,13 +163,21 @@ def probabilistic_anchor_crossover(
 		split1 = rng.randrange(len(parent1.gates) + 1)
 		split2 = rng.randrange(len(parent2.gates) + 1)
 		child1 = CircuitList(
-			gates=parent1.gates[:split1] + parent2.gates[split2:],
+			gates=parent1.gates[:split1] + _remap_gates_to_cluster(
+				parent2.gates[split2:],
+				source_cluster=parent2.cluster,
+				target_cluster=parent1.cluster,
+			),
 			cluster=parent1.cluster,
 			max_depth=parent1.max_depth,
 			max_gates=parent1.max_gates,
 		)
 		child2 = CircuitList(
-			gates=parent2.gates[:split2] + parent1.gates[split1:],
+			gates=parent2.gates[:split2] + _remap_gates_to_cluster(
+				parent1.gates[split1:],
+				source_cluster=parent1.cluster,
+				target_cluster=parent2.cluster,
+			),
 			cluster=parent2.cluster,
 			max_depth=parent2.max_depth,
 			max_gates=parent2.max_gates,
@@ -176,8 +212,8 @@ def probabilistic_anchor_crossover(
 			child1_gates.extend(gap1)
 			child2_gates.extend(gap2)
 		else:
-			child1_gates.extend(gap2)
-			child2_gates.extend(gap1)
+			child1_gates.extend(_remap_gates_to_cluster(gap2, source_cluster=parent2.cluster, target_cluster=parent1.cluster))
+			child2_gates.extend(_remap_gates_to_cluster(gap1, source_cluster=parent1.cluster, target_cluster=parent2.cluster))
 
 		child1_gates.extend(parent1.gates[block.start1 : block.end1 + 1])
 		child2_gates.extend(parent2.gates[block.start2 : block.end2 + 1])
@@ -191,8 +227,8 @@ def probabilistic_anchor_crossover(
 		child1_gates.extend(tail1)
 		child2_gates.extend(tail2)
 	else:
-		child1_gates.extend(tail2)
-		child2_gates.extend(tail1)
+		child1_gates.extend(_remap_gates_to_cluster(tail2, source_cluster=parent2.cluster, target_cluster=parent1.cluster))
+		child2_gates.extend(_remap_gates_to_cluster(tail1, source_cluster=parent1.cluster, target_cluster=parent2.cluster))
 
 	child1 = CircuitList(
 		gates=child1_gates,
@@ -266,8 +302,12 @@ def mutate_circuit(
 	rng = _as_rng(seed)
 	child = circuit.clone()
 
+	def _finalize(candidate: CircuitList) -> CircuitList:
+		candidate.crop_to_limits()
+		return candidate
+
 	if rng.random() > mutation_rate:
-		return child
+		return _finalize(child)
 
 	mutation = rng.choice(["add", "remove", "change_params", "change_cluster"])
 	parameterized = {"rx", "ry", "rz"}
@@ -277,7 +317,7 @@ def mutate_circuit(
 	if mutation == "remove" and mutable_indices:
 		remove_index = rng.choice(mutable_indices)
 		del child.gates[remove_index]
-		return child
+		return _finalize(child)
 
 	if mutation == "change_params" and mutable_indices:
 		candidate_indices = [index for index in mutable_indices if child.gates[index].name in parameterized]
@@ -293,7 +333,7 @@ def mutate_circuit(
 				depth=gate.depth,
 				immutable=gate.immutable,
 			)
-			return child
+			return _finalize(child)
 
 	if mutation == "change_cluster" and child.cluster:
 		cluster_size = len(child.cluster)
@@ -314,7 +354,7 @@ def mutate_circuit(
 				)
 			child.gates = remapped_gates
 			child.cluster = new_cluster
-			return child
+			return _finalize(child)
 
 	cluster_list = list(child.cluster) if child.cluster else [0]
 	new_gate = random_circuit(
@@ -326,5 +366,4 @@ def mutate_circuit(
 	).gates[0]
 	insert_at = rng.randrange(len(child.gates) + 1)
 	child.gates.insert(insert_at, new_gate)
-	child.crop_to_limits()
-	return child
+	return _finalize(child)

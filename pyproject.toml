@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Evolutionary Algorithm for Robust Quantum Circuits"
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "qiskit>=2.4.1",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
