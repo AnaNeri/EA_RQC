@@ -9,14 +9,17 @@ import numpy as np
 
 from circuit.entities.circuit_list import CircuitList
 from .matrix_eval import (
+	apply_channel_to_state,
 	circuit_to_matrix,
 	circuit_to_faulty_channel,
 	fidelity_similarity,
 	frobenius_similarity,
 	infer_num_qubits_from_matrix,
 	mix_channels,
+	state_fidelity,
 	unitary_to_superoperator,
 )
+from .targets import SampleTarget
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,8 @@ class CircuitFitnessBreakdown:
 	# Optional QPC diagnostics
 	qpc_distance: float = 0.0
 	approximation_error: float = 0.0
+	# Optional sample-based scoring
+	sample_score: float = 0.0
 
 
 def _gate_noise_penalty(circuit: CircuitList, noise_model: Any) -> float:
@@ -190,6 +195,54 @@ def _behavior_score_with_qpc(
 
 
 
+def _sample_score(
+	circuit: CircuitList,
+	*,
+	samples: SampleTarget,
+	noise_model: Any,
+	qpc_enabled: bool,
+	qpc_mode: str,
+) -> float:
+	"""Compute mean phase-sensitive fidelity over all input→output sample pairs.
+
+	Without QPC: applies the ideal unitary and measures real(Re(\u27e8output|U|input\u27e9)) scaled to [0,1].
+	Phase-sensitive: identity maps |11\u27e9 \u2192 |11\u27e9 scores lower than CZ which maps |11\u27e9 \u2192 -|11\u27e9.
+	With QPC: applies the faulty channel and measures channel-output vs target via density matrix overlap.
+	"""
+	if not samples.samples:
+		return 1.0
+
+	num_qubits = samples.num_qubits
+	error_rates: dict[int, float] = {}
+	if noise_model is not None:
+		error_rates = getattr(noise_model, "qubit_error_rates", {})
+
+	if qpc_enabled:
+		superop = circuit_to_faulty_channel(circuit, error_rates=error_rates, num_qubits=num_qubits)
+		scores = []
+		for s in samples.samples:
+			rho_out = apply_channel_to_state(superop, s.input_state)
+			# For ideal pure-state targets, compare rho_out to the target density matrix
+			# via Frobenius similarity (works with mixed states too after depolarizing)
+			rho_target = np.outer(s.output_state, s.output_state.conjugate())
+			dist = float(np.linalg.norm(rho_out - rho_target, "fro"))
+			# max Frobenius distance between two unit-trace density matrices is 2^(1/2)
+			score = max(0.0, min(1.0, 1.0 - dist / 1.4143))
+			scores.append(score)
+	else:
+		unitary = circuit_to_matrix(circuit, target_kind="unitary", num_qubits=num_qubits)
+		# Phase-sensitive: compare each output column of U against target output state.
+		# Use real part of complex overlap ⟨target|U|input⟩, scaled to [0,1] via (1 + Re(overlap)) / 2.
+		scores = []
+		for s in samples.samples:
+			overlap = complex(s.output_state.conjugate() @ (unitary @ s.input_state))
+			# Scale: overlap=+1 (perfect) → 1.0, overlap=-1 (wrong phase) → 0.0, orthogonal → 0.5
+			score = max(0.0, min(1.0, (1.0 + float(overlap.real)) / 2.0))
+			scores.append(score)
+
+	return sum(scores) / len(scores)
+
+
 def _complexity_score(circuit: CircuitList) -> float:
 	gate_limit = max(1, circuit.max_gates or len(circuit.gates) or 1)
 	depth_limit = max(1, circuit.max_depth or max((gate.depth for gate in circuit.gates), default=1))
@@ -215,21 +268,26 @@ def fitness_circuit(
 	frobenius_weight: float = 0.3,
 	qpc_enabled: bool = False,
 	qpc_mode: str = "exact",
+	samples: SampleTarget | None = None,
+	sample_weight: float = 0.0,
 ) -> CircuitFitnessBreakdown:
 	"""Compute a multi-objective fitness in [0, 1].
-	
+
 	Args:
 		qpc_enabled: if True, use probabilistic combinator channels for behavior scoring.
 		qpc_mode: "exact", "approx", or "mixed" for QPC evaluation mode.
+		samples: optional SampleTarget for sample-based synthesis.
+		sample_weight: weight of sample score in total fitness (0 = disabled).
 	"""
-
-	weight_sum = behavior_weight + robustness_weight + complexity_weight
+	effective_sample_weight = sample_weight if (samples is not None and sample_weight > 0.0) else 0.0
+	weight_sum = behavior_weight + robustness_weight + complexity_weight + effective_sample_weight
 	if weight_sum <= 0:
 		raise ValueError("fitness weights must sum to a positive value")
 
 	bw = behavior_weight / weight_sum
 	rw = robustness_weight / weight_sum
 	cw = complexity_weight / weight_sum
+	sw = effective_sample_weight / weight_sum
 
 	if qpc_enabled:
 		behavior, qpc_distance, approx_error = _behavior_score_with_qpc(
@@ -257,7 +315,13 @@ def fitness_circuit(
 	robustness = 1.0 / (1.0 + max(0.0, _gate_noise_penalty(circuit, noise_model)))
 	complexity = _complexity_score(circuit)
 
-	total = (bw * behavior) + (rw * robustness) + (cw * complexity)
+	sample = (
+		_sample_score(circuit, samples=samples, noise_model=noise_model, qpc_enabled=qpc_enabled, qpc_mode=qpc_mode)
+		if sw > 0.0
+		else 0.0
+	)
+
+	total = (bw * behavior) + (rw * robustness) + (cw * complexity) + (sw * sample)
 	return CircuitFitnessBreakdown(
 		behavior_score=behavior,
 		robustness_score=robustness,
@@ -265,4 +329,5 @@ def fitness_circuit(
 		total_fitness=max(0.0, min(1.0, total)),
 		qpc_distance=qpc_distance,
 		approximation_error=approx_error,
+		sample_score=sample,
 	)

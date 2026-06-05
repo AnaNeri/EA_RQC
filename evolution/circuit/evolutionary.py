@@ -11,7 +11,7 @@ import numpy as np
 from circuit.entities.circuit_list import CircuitList
 from .fitness import CircuitFitnessBreakdown, fitness_circuit
 from .operators import mutate_circuit, probabilistic_anchor_crossover, random_circuit
-from .targets import load_matrix_target_json
+from .targets import SampleTarget, load_matrix_target_json
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,8 @@ class CircuitEvolutionConfig:
 	# QPC/probabilistic combinator settings
 	qpc_enabled: bool = False
 	qpc_mode: str = "exact"  # "exact", "approx", or "mixed"
+	# Sample-based synthesis weight (0 = disabled)
+	sample_weight: float = 0.0
 
 
 def _as_rng(seed: int | None) -> Random:
@@ -65,7 +67,12 @@ def _population_diversity(population: list[CircuitList]) -> float:
 	return len(signatures) / len(population)
 
 
-def _circuit_cache_key(circuit: CircuitList, qpc_enabled: bool = False, qpc_mode: str = "exact") -> tuple[object, ...]:
+def _circuit_cache_key(
+	circuit: CircuitList,
+	qpc_enabled: bool = False,
+	qpc_mode: str = "exact",
+	sample_weight: float = 0.0,
+) -> tuple[object, ...]:
 	return (
 		tuple(circuit.cluster),
 		int(circuit.max_depth),
@@ -73,6 +80,7 @@ def _circuit_cache_key(circuit: CircuitList, qpc_enabled: bool = False, qpc_mode
 		tuple(circuit.signatures(precision=6, include_depth=True)),
 		qpc_enabled,
 		qpc_mode,
+		round(sample_weight, 6),
 	)
 
 
@@ -90,14 +98,16 @@ def _evaluate_population(
 	frobenius_weight: float,
 	qpc_enabled: bool = False,
 	qpc_mode: str = "exact",
+	samples: SampleTarget | None = None,
+	sample_weight: float = 0.0,
 	cache: dict[tuple[object, ...], CircuitFitnessBreakdown] | None = None,
 ) -> list[CircuitFitnessBreakdown]:
 	if cache is None:
 		cache = {}
-	
+
 	breakdowns: list[CircuitFitnessBreakdown] = []
 	for circuit in population:
-		key = _circuit_cache_key(circuit, qpc_enabled, qpc_mode)
+		key = _circuit_cache_key(circuit, qpc_enabled, qpc_mode, sample_weight)
 		if key not in cache:
 			cache[key] = fitness_circuit(
 				circuit,
@@ -112,6 +122,8 @@ def _evaluate_population(
 				frobenius_weight=frobenius_weight,
 				qpc_enabled=qpc_enabled,
 				qpc_mode=qpc_mode,
+				samples=samples,
+				sample_weight=sample_weight,
 			)
 		breakdowns.append(cache[key])
 	return breakdowns
@@ -180,6 +192,7 @@ def evolutionary_best_circuit(
 	target_circuit: CircuitList | None,
 	target_matrix: np.ndarray | None = None,
 	noise_model: Any,
+	samples: SampleTarget | None = None,
 	seed: int | None = None,
 ) -> CircuitEvolutionResult:
 	rng = _as_rng(seed)
@@ -213,6 +226,8 @@ def evolutionary_best_circuit(
 			frobenius_weight=config.frobenius_weight,
 			qpc_enabled=config.qpc_enabled,
 			qpc_mode=config.qpc_mode,
+			samples=samples,
+			sample_weight=config.sample_weight,
 			cache=fitness_cache,
 		)
 		scores = [entry.total_fitness for entry in breakdowns]
@@ -277,6 +292,8 @@ def evolutionary_best_circuit(
 			frobenius_weight=config.frobenius_weight,
 			qpc_enabled=config.qpc_enabled,
 			qpc_mode=config.qpc_mode,
+			samples=samples,
+			sample_weight=config.sample_weight,
 			cache=fitness_cache,
 		)
 
@@ -300,6 +317,8 @@ def evolutionary_best_circuit(
 		frobenius_weight=config.frobenius_weight,
 		qpc_enabled=config.qpc_enabled,
 		qpc_mode=config.qpc_mode,
+		samples=samples,
+		sample_weight=config.sample_weight,
 		cache=fitness_cache,
 	)
 	best_index = max(range(len(population)), key=lambda idx: final_breakdowns[idx].total_fitness)

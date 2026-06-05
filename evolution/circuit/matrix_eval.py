@@ -41,6 +41,31 @@ def _single_qubit_matrix(name: str, parameters: Sequence[float]) -> np.ndarray:
 			[[cmath.exp(-1j * theta / 2.0), 0], [0, cmath.exp(1j * theta / 2.0)]],
 			dtype=np.complex128,
 		)
+	if name == "s":
+		return np.array([[1, 0], [0, 1j]], dtype=np.complex128)
+	if name == "sdg":
+		return np.array([[1, 0], [0, -1j]], dtype=np.complex128)
+	if name == "t":
+		return np.array([[1, 0], [0, cmath.exp(1j * math.pi / 4.0)]], dtype=np.complex128)
+	if name == "tdg":
+		return np.array([[1, 0], [0, cmath.exp(-1j * math.pi / 4.0)]], dtype=np.complex128)
+	if name in {"p", "phase"}:
+		lam = float(parameters[0]) if parameters else 0.0
+		return np.array([[1, 0], [0, cmath.exp(1j * lam)]], dtype=np.complex128)
+	if name == "u":
+		# U(theta, phi, lambda) — Qiskit U3 gate
+		theta = float(parameters[0]) if len(parameters) > 0 else 0.0
+		phi   = float(parameters[1]) if len(parameters) > 1 else 0.0
+		lam   = float(parameters[2]) if len(parameters) > 2 else 0.0
+		c = math.cos(theta / 2.0)
+		s = math.sin(theta / 2.0)
+		return np.array(
+			[
+				[c, -cmath.exp(1j * lam) * s],
+				[cmath.exp(1j * phi) * s, cmath.exp(1j * (phi + lam)) * c],
+			],
+			dtype=np.complex128,
+		)
 
 	raise ValueError(f"Unsupported single-qubit gate for matrix evaluation: {name}")
 
@@ -75,6 +100,36 @@ def _two_qubit_matrix(name: str) -> np.ndarray:
 				[0, 0, 1j, 1],
 				[1, -1j, 0, 0],
 				[-1j, 1, 0, 0],
+			],
+			dtype=np.complex128,
+		)
+	if name == "swap":
+		return np.array(
+			[
+				[1, 0, 0, 0],
+				[0, 0, 1, 0],
+				[0, 1, 0, 0],
+				[0, 0, 0, 1],
+			],
+			dtype=np.complex128,
+		)
+	if name == "cy":
+		return np.array(
+			[
+				[1, 0, 0,  0],
+				[0, 1, 0,  0],
+				[0, 0, 0, -1j],
+				[0, 0, 1j, 0],
+			],
+			dtype=np.complex128,
+		)
+	if name == "ch":
+		return np.array(
+			[
+				[1, 0,                    0,                   0],
+				[0, 1,                    0,                   0],
+				[0, 0,  1.0 / math.sqrt(2), 1.0 / math.sqrt(2)],
+				[0, 0,  1.0 / math.sqrt(2), -1.0 / math.sqrt(2)],
 			],
 			dtype=np.complex128,
 		)
@@ -423,6 +478,42 @@ def circuit_to_faulty_channel(
 		channel = compose_superoperators(expanded_faulty_channel, channel)
 	
 	return channel
+
+
+def apply_channel_to_state(superop: np.ndarray, state_vec: np.ndarray) -> np.ndarray:
+	"""Apply a superoperator channel to a pure state vector.
+
+	Builds the density matrix ρ = |ψ⟩⟨ψ|, vectorizes it (row-major / C-order),
+	applies the superoperator, and returns the output density matrix.
+
+	Args:
+		superop: Superoperator of shape (d^2, d^2) where d = 2^n.
+		state_vec: State vector of shape (d,), complex.
+
+	Returns:
+		Output density matrix of shape (d, d), complex.
+	"""
+	state_vec = np.asarray(state_vec, dtype=np.complex128)
+	dim = state_vec.shape[0]
+	rho = np.outer(state_vec, state_vec.conjugate())  # |ψ⟩⟨ψ|
+	rho_vec = rho.flatten(order="C")                  # row-major vectorization
+	out_vec = superop @ rho_vec
+	return out_vec.reshape(dim, dim, order="C")
+
+
+def state_fidelity(rho_out: np.ndarray, target_state: np.ndarray) -> float:
+	"""Compute ⟨φ|ρ_out|φ⟩ — overlap of output density matrix with target pure state.
+
+	Args:
+		rho_out: Output density matrix of shape (d, d).
+		target_state: Target pure state vector of shape (d,).
+
+	Returns:
+		Fidelity in [0, 1].
+	"""
+	target_state = np.asarray(target_state, dtype=np.complex128)
+	fid = float(np.real(target_state.conjugate() @ rho_out @ target_state))
+	return max(0.0, min(1.0, fid))
 
 
 def fidelity_similarity(candidate: np.ndarray, target: np.ndarray) -> float:

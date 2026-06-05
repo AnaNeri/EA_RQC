@@ -262,9 +262,10 @@ def random_circuit(
 	gates: list[CircuitGate] = []
 	gate_count = rng.randint(1, max(1, max_gates))
 
-	one_qubit_gates = {"x", "y", "z", "h", "sx", "rx", "ry", "rz"}
-	two_qubit_gates = {"cx", "cz", "ecr"}
-	parameterized = {"rx", "ry", "rz"}
+	one_qubit_gates = {"x", "y", "z", "h", "sx", "rx", "ry", "rz", "s", "sdg", "t", "tdg", "p", "phase", "u", "id"}
+	two_qubit_gates = {"cx", "cz", "ecr", "cy", "ch", "swap"}
+	parameterized_1 = {"rx", "ry", "rz", "p", "phase"}
+	parameterized_3 = {"u"}
 
 	for _ in range(gate_count):
 		name = str(rng.choice(list(gate_catalog))).lower().strip()
@@ -272,12 +273,14 @@ def random_circuit(
 
 		if name in two_qubit_gates and len(cluster_list) >= 2:
 			qubits = tuple(rng.sample(cluster_list, 2))
-		elif name in one_qubit_gates:
+		elif name in one_qubit_gates or len(cluster_list) < 2:
 			qubits = (rng.choice(cluster_list),)
 		else:
 			qubits = (rng.choice(cluster_list),)
 
-		if name in parameterized:
+		if name in parameterized_3:
+			parameters = tuple(rng.uniform(-3.1416, 3.1416) for _ in range(3))
+		elif name in parameterized_1:
 			parameters = (rng.uniform(-3.1416, 3.1416),)
 		else:
 			parameters = ()
@@ -310,7 +313,9 @@ def mutate_circuit(
 		return _finalize(child)
 
 	mutation = rng.choice(["add", "remove", "change_params", "change_cluster"])
-	parameterized = {"rx", "ry", "rz"}
+	parameterized_1 = {"rx", "ry", "rz", "p", "phase"}
+	parameterized_3 = {"u"}
+	parameterized = parameterized_1 | parameterized_3
 
 	mutable_indices = [index for index, gate in enumerate(child.gates) if not gate.immutable]
 

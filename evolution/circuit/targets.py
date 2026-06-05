@@ -18,6 +18,45 @@ class MatrixTarget:
 	num_qubits: int
 
 
+@dataclass(frozen=True)
+class StateVectorSample:
+	"""One input→output state-vector pair for sample-based circuit synthesis."""
+
+	input_state: np.ndarray   # shape (2^n,), complex128
+	output_state: np.ndarray  # shape (2^n,), complex128
+	label: str = ""
+
+
+@dataclass(frozen=True)
+class SampleTarget:
+	"""Collection of state-vector samples that fully define a target operation.
+
+	For an oracle with n input qubits supply all 2^n computational-basis
+	input/output pairs (or a subset if partial specification is sufficient).
+	"""
+
+	samples: tuple[StateVectorSample, ...]
+	num_qubits: int
+
+	@staticmethod
+	def from_unitary(unitary: np.ndarray, num_qubits: int) -> "SampleTarget":
+		"""Build a SampleTarget from a unitary by enumerating all basis states."""
+		dim = 2**num_qubits
+		samples = []
+		for i in range(dim):
+			input_state = np.zeros(dim, dtype=np.complex128)
+			input_state[i] = 1.0
+			output_state = unitary[:, i].astype(np.complex128)
+			samples.append(
+				StateVectorSample(
+					input_state=input_state,
+					output_state=output_state,
+					label=f"|{i:0{num_qubits}b}⟩",
+				)
+			)
+		return SampleTarget(samples=tuple(samples), num_qubits=num_qubits)
+
+
 def _parse_complex(value: Any) -> complex:
 	if isinstance(value, (int, float)):
 		return complex(float(value), 0.0)
