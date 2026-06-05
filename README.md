@@ -1,99 +1,74 @@
 # Evolutionary Algorithm for Robust Quantum Circuits (EA-RQC)
 
-EA-RQC is a Python package for searching robust qubit clusters on noisy quantum hardware using an evolutionary algorithm.
+EA-RQC is a Python package that searches for robust qubit clusters on noisy quantum hardware using an evolutionary algorithm.
 
-The project includes:
+Features
+- Core evolutionary mapping logic for cluster search
+- Circuit-level evolutionary routines and fitness evaluation
+- Qiskit-like adapters and parsers
+- Demo scripts and a test suite
 
-- Core evolutionary mapping logic.
-- Data models and operators for selection, crossover, and mutation.
-- Parsers to construct internal models from Qiskit-like sources.
-- Tests and a runnable demo.
+Requirements
+- Python 3.10 or newer
 
-## Requirements
-
-- Python 3.10+
-
-## Installation
-
-Clone the repository and install it in editable mode:
+Installation
+1. Clone the repository.
+2. Install in editable mode:
 
 ```bash
 pip install -e .
 ```
 
-Install test dependencies:
+3. (Optional) Install test dependencies:
 
 ```bash
 pip install -e .[test]
 ```
 
-## Run the demo
-
-Run the example in `demo/map_demo.py`:
+Quick start
+- Run the mapping demo:
 
 ```bash
 python -m demo.map_demo
 ```
 
-The demo prints:
-
-- The best cluster found.
-- The best fitness score.
-- The final ranked population.
-- The number of generations executed.
-
-Run the circuit-level intermediate demo in `demo/circuit_demo.py`:
+- Run a circuit demo (examples available under `demo/`):
 
 ```bash
 python -m demo.circuit_demo
+python -m demo.circuit_demo_grover_oracle
 ```
 
-This demo prints intermediate checkpoints:
-
-- Shared structure anchors detected between parent circuits.
-- Children produced by probabilistic anchor crossover.
-- Mutation result.
-- Graph projection from list-based circuit representation.
-- Multi-objective fitness breakdown.
-- Generation-by-generation diversity for circuit EA.
-
-## Run tests
+- Run the full test suite:
 
 ```bash
 pytest
 ```
 
-## Main API
+Main API
+- Cluster-level orchestration: `evolution.cluster.evolutionary.evolutionary_best_clusters`
+- Circuit-level orchestration: `evolution.circuit.evolutionary.evolutionary_best_circuit`
 
-The main orchestration function is `evolution.cluster.evolutionary.evolutionary_best_clusters`.
+Key parameters (examples)
+- `device_qubits`: total device qubits
+- `target_qubits`: cluster size to search
+- `max_generation`: number of generations
+- `population`: initial population size
+- `noise_model`: qubit error information
+- `type_ranking`: ranking strategy (`linear`, `exponential`, `deterministic`)
+- `crossover_rate`, `mutation_rate`, `lambda_ratio`
+- `coupling_graph`: optional device topology
 
-Circuit-level orchestration is available in `evolution.circuit.evolutionary.evolutionary_best_circuit`.
+Project layout
+- `evolution/` — evolutionary algorithm implementation
+- `circuit/` — circuit and noise entities
+- `adapters/` — integration layer (Qiskit adapters)
+- `demo/` — runnable demonstrations
+- `tests/` — test suite
 
-Important parameters:
+Contributing
+- Open issues and pull requests are welcome. Follow repository coding style and add tests for new features.
 
-- `device_qubits`: total number of qubits in the device.
-- `target_qubits`: cluster size to search for.
-- `max_generation`: number of generations to evolve.
-- `population`: initial population size.
-- `noise_model`: qubit error information.
-- `type_ranking`: ranking strategy (`linear`, `exponential`, or `deterministic`).
-- `lambda_ratio`: number of parent-pair rounds per generation.
-- `crossover_rate`: probability of applying crossover.
-- `mutation_rate`: probability of mutating a child.
-- `coupling_graph`: optional topology for coupling-aware fitness.
-- `prioritize`: objective weighting mode (`qubits`, `coupling`, or `both`).
-
-Return value includes the final population and fitness values, plus the best cluster, best fitness, and generations executed.
-
-## Project structure
-
-- `evolution/`: canonical evolutionary algorithm implementation.
-- `circuit/`: circuit and noise entities.
-- `adapters/`: canonical integration layer (including Qiskit adapters).
-- `demo/`: runnable demonstration script.
-- `tests/`: test suite.
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+License
+- This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
