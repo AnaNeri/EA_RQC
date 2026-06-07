@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -16,7 +16,9 @@ from .matrix_eval import (
 	frobenius_similarity,
 	infer_num_qubits_from_matrix,
 	mix_channels,
+	partial_trace_density_matrix,
 	state_fidelity,
+	subsystem_similarity,
 	unitary_to_superoperator,
 )
 from .targets import SampleTarget
@@ -62,6 +64,7 @@ def _behavior_score(
 	target_kind: str,
 	fidelity_weight: float,
 	frobenius_weight: float,
+	working_qubits: Sequence[int] | None = None,
 ) -> float:
 	if target_matrix is None and target is None:
 		return 1.0
@@ -75,8 +78,13 @@ def _behavior_score(
 
 	num_qubits = infer_num_qubits_from_matrix(effective_target_matrix, target_kind=target_kind)
 	candidate_matrix = circuit_to_matrix(circuit, target_kind=target_kind, num_qubits=num_qubits)
-	fidelity = fidelity_similarity(candidate_matrix, effective_target_matrix)
-	frobenius = frobenius_similarity(candidate_matrix, effective_target_matrix)
+	fidelity, frobenius = subsystem_similarity(
+		candidate_matrix,
+		effective_target_matrix,
+		target_kind=target_kind,
+		num_qubits=num_qubits,
+		working_qubits=working_qubits,
+	)
 
 	weight_sum = fidelity_weight + frobenius_weight
 	if weight_sum <= 0:
@@ -96,6 +104,7 @@ def _behavior_score_with_qpc(
 	frobenius_weight: float,
 	noise_model: Any,
 	qpc_mode: str = "exact",
+	working_qubits: Sequence[int] | None = None,
 ) -> tuple[float, float, float]:
 	"""Compute behavior score using probabilistic combinator channels.
 	
@@ -175,14 +184,21 @@ def _behavior_score_with_qpc(
 			error_rates=error_rates,
 			num_qubits=num_qubits,
 		)
+		comparison_kind = "channel"
 	else:
 		# approx/mixed mode: use ideal unitaries for faster comparison
 		# (Approximation mode doesn't penalize against faulty channels directly)
 		target_for_comparison = effective_target_matrix
 		candidate_matrix = circuit_to_matrix(circuit, target_kind=target_kind, num_qubits=num_qubits)
-	
-	fidelity = fidelity_similarity(candidate_matrix, target_for_comparison)
-	frobenius = frobenius_similarity(candidate_matrix, target_for_comparison)
+		comparison_kind = target_kind
+
+	fidelity, frobenius = subsystem_similarity(
+		candidate_matrix,
+		target_for_comparison,
+		target_kind=comparison_kind,
+		num_qubits=num_qubits,
+		working_qubits=working_qubits,
+	)
 
 	weight_sum = fidelity_weight + frobenius_weight
 	if weight_sum <= 0:
@@ -202,6 +218,7 @@ def _sample_score(
 	noise_model: Any,
 	qpc_enabled: bool,
 	qpc_mode: str,
+	working_qubits: Sequence[int] | None = None,
 ) -> float:
 	"""Compute mean phase-sensitive fidelity over all input→output sample pairs.
 
@@ -212,32 +229,89 @@ def _sample_score(
 	if not samples.samples:
 		return 1.0
 
-	num_qubits = samples.num_qubits
+	def _infer_circuit_num_qubits() -> int:
+		inferred = max((qubit for gate in circuit.gates for qubit in gate.qubits), default=-1) + 1
+		inferred = max(inferred, len(circuit.cluster), 1)
+		if working_qubits:
+			inferred = max(inferred, max(int(qubit) for qubit in working_qubits) + 1)
+		return inferred
+
+	def _normalise_working_qubits(num_qubits: int) -> tuple[int, ...]:
+		if not working_qubits:
+			return tuple(range(num_qubits))
+		normalised = tuple(sorted(int(qubit) for qubit in working_qubits))
+		if len(set(normalised)) != len(normalised):
+			raise ValueError("working_qubits must not contain duplicates")
+		if any(qubit < 0 or qubit >= num_qubits for qubit in normalised):
+			raise ValueError("working_qubits contains out-of-range qubit indices")
+		return normalised
+
+	def _embed_working_state_on_full_register(
+		state: np.ndarray,
+		*,
+		num_qubits: int,
+		keep_qubits: Sequence[int],
+	) -> np.ndarray:
+		if len(keep_qubits) == num_qubits:
+			return np.asarray(state, dtype=np.complex128)
+		expected_dim = 2 ** len(keep_qubits)
+		reduced = np.asarray(state, dtype=np.complex128).reshape(expected_dim)
+		full = np.zeros(2**num_qubits, dtype=np.complex128)
+		for basis_index, amplitude in enumerate(reduced):
+			if abs(amplitude) < 1e-15:
+				continue
+			full_index = 0
+			for bit_pos, qubit in enumerate(keep_qubits):
+				if (basis_index >> bit_pos) & 1:
+					full_index |= 1 << int(qubit)
+			full[full_index] = amplitude
+		return full
+
+	full_num_qubits = _infer_circuit_num_qubits()
+	keep_qubits = _normalise_working_qubits(full_num_qubits)
+	if len(keep_qubits) != samples.num_qubits:
+		raise ValueError("samples.num_qubits must match len(working_qubits)")
+
 	error_rates: dict[int, float] = {}
 	if noise_model is not None:
 		error_rates = getattr(noise_model, "qubit_error_rates", {})
 
 	if qpc_enabled:
-		superop = circuit_to_faulty_channel(circuit, error_rates=error_rates, num_qubits=num_qubits)
+		superop = circuit_to_faulty_channel(circuit, error_rates=error_rates, num_qubits=full_num_qubits)
 		scores = []
 		for s in samples.samples:
-			rho_out = apply_channel_to_state(superop, s.input_state)
-			# For ideal pure-state targets, compare rho_out to the target density matrix
-			# via Frobenius similarity (works with mixed states too after depolarizing)
-			rho_target = np.outer(s.output_state, s.output_state.conjugate())
-			dist = float(np.linalg.norm(rho_out - rho_target, "fro"))
-			# max Frobenius distance between two unit-trace density matrices is 2^(1/2)
-			score = max(0.0, min(1.0, 1.0 - dist / 1.4143))
+			input_state_full = _embed_working_state_on_full_register(
+				s.input_state,
+				num_qubits=full_num_qubits,
+				keep_qubits=keep_qubits,
+			)
+			rho_out_full = apply_channel_to_state(superop, input_state_full)
+			rho_out = partial_trace_density_matrix(
+				rho_out_full,
+				num_qubits=full_num_qubits,
+				keep_qubits=keep_qubits,
+			)
+			score = state_fidelity(rho_out, s.output_state)
 			scores.append(score)
 	else:
-		unitary = circuit_to_matrix(circuit, target_kind="unitary", num_qubits=num_qubits)
+		unitary = circuit_to_matrix(circuit, target_kind="unitary", num_qubits=full_num_qubits)
 		# Phase-sensitive: compare each output column of U against target output state.
 		# Use real part of complex overlap ⟨target|U|input⟩, scaled to [0,1] via (1 + Re(overlap)) / 2.
 		scores = []
 		for s in samples.samples:
-			overlap = complex(s.output_state.conjugate() @ (unitary @ s.input_state))
-			# Scale: overlap=+1 (perfect) → 1.0, overlap=-1 (wrong phase) → 0.0, orthogonal → 0.5
-			score = max(0.0, min(1.0, (1.0 + float(overlap.real)) / 2.0))
+			input_state_full = _embed_working_state_on_full_register(
+				s.input_state,
+				num_qubits=full_num_qubits,
+				keep_qubits=keep_qubits,
+			)
+			output_full = unitary @ input_state_full
+			rho_out_full = np.outer(output_full, output_full.conjugate())
+			rho_out = partial_trace_density_matrix(
+				rho_out_full,
+				num_qubits=full_num_qubits,
+				keep_qubits=keep_qubits,
+			)
+			score = state_fidelity(rho_out, s.output_state)
 			scores.append(score)
 
 	return sum(scores) / len(scores)
@@ -270,6 +344,7 @@ def fitness_circuit(
 	qpc_mode: str = "exact",
 	samples: SampleTarget | None = None,
 	sample_weight: float = 0.0,
+	working_qubits: Sequence[int] | None = None,
 ) -> CircuitFitnessBreakdown:
 	"""Compute a multi-objective fitness in [0, 1].
 
@@ -299,6 +374,7 @@ def fitness_circuit(
 			frobenius_weight=frobenius_weight,
 			noise_model=noise_model,
 			qpc_mode=qpc_mode,
+			working_qubits=working_qubits,
 		)
 	else:
 		behavior = _behavior_score(
@@ -308,6 +384,7 @@ def fitness_circuit(
 			target_kind=target_kind,
 			fidelity_weight=fidelity_weight,
 			frobenius_weight=frobenius_weight,
+			working_qubits=working_qubits,
 		)
 		qpc_distance = 0.0
 		approx_error = 0.0
@@ -316,7 +393,14 @@ def fitness_circuit(
 	complexity = _complexity_score(circuit)
 
 	sample = (
-		_sample_score(circuit, samples=samples, noise_model=noise_model, qpc_enabled=qpc_enabled, qpc_mode=qpc_mode)
+		_sample_score(
+			circuit,
+			samples=samples,
+			noise_model=noise_model,
+			qpc_enabled=qpc_enabled,
+			qpc_mode=qpc_mode,
+			working_qubits=working_qubits,
+		)
 		if sw > 0.0
 		else 0.0
 	)

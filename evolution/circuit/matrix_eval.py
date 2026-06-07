@@ -501,6 +501,99 @@ def apply_channel_to_state(superop: np.ndarray, state_vec: np.ndarray) -> np.nda
 	return out_vec.reshape(dim, dim, order="C")
 
 
+def _normalise_working_qubits(working_qubits: Sequence[int] | None, num_qubits: int) -> tuple[int, ...]:
+	if not working_qubits:
+		return tuple(range(num_qubits))
+	normalised = tuple(sorted(int(qubit) for qubit in working_qubits))
+	if len(set(normalised)) != len(normalised):
+		raise ValueError("working_qubits must not contain duplicates")
+	if any(qubit < 0 or qubit >= num_qubits for qubit in normalised):
+		raise ValueError("working_qubits contains out-of-range qubit indices")
+	return normalised
+
+
+def _basis_state_for_working_qubits(*, num_qubits: int, working_qubits: Sequence[int], basis_index: int) -> np.ndarray:
+	"""Create |psi> with working-qubit bits from basis_index and all ancillas at |0>."""
+
+	state = np.zeros(2**num_qubits, dtype=np.complex128)
+	full_index = 0
+	for bit_position, qubit in enumerate(working_qubits):
+		if (basis_index >> bit_position) & 1:
+			full_index |= 1 << int(qubit)
+	state[full_index] = 1.0
+	return state
+
+
+def partial_trace_density_matrix(
+	rho: np.ndarray,
+	*,
+	num_qubits: int,
+	keep_qubits: Sequence[int],
+) -> np.ndarray:
+	"""Return reduced density matrix on keep_qubits by tracing out the complement."""
+
+	keep = _normalise_working_qubits(keep_qubits, num_qubits)
+	if len(keep) == num_qubits:
+		return np.asarray(rho, dtype=np.complex128)
+
+	tensor = np.asarray(rho, dtype=np.complex128).reshape([2] * num_qubits * 2)
+	trace_qubits = [qubit for qubit in range(num_qubits) if qubit not in keep]
+	trace_axes = sorted((num_qubits - 1 - int(qubit)) for qubit in trace_qubits)
+	active_qubits = num_qubits
+	for axis in sorted(trace_axes, reverse=True):
+		tensor = np.trace(tensor, axis1=axis, axis2=axis + active_qubits)
+		active_qubits -= 1
+
+	return tensor.reshape((2 ** len(keep), 2 ** len(keep)))
+
+
+def subsystem_similarity(
+	candidate_matrix: np.ndarray,
+	target_matrix: np.ndarray,
+	*,
+	target_kind: str,
+	num_qubits: int,
+	working_qubits: Sequence[int] | None,
+) -> tuple[float, float]:
+	"""Compare candidate and target only on working_qubits, ignoring ancilla outputs.
+
+	For each computational basis state on working_qubits (with ancillas in |0>),
+	apply the candidate/target map, reduce to working_qubits via partial trace,
+	then average matrix similarities across all probes.
+	"""
+
+	keep = _normalise_working_qubits(working_qubits, num_qubits)
+	if len(keep) == num_qubits:
+		return fidelity_similarity(candidate_matrix, target_matrix), frobenius_similarity(candidate_matrix, target_matrix)
+
+	kind = target_kind.lower().strip()
+	probe_count = 2 ** len(keep)
+	fidelity_acc = 0.0
+	frobenius_acc = 0.0
+
+	for probe_index in range(probe_count):
+		psi = _basis_state_for_working_qubits(num_qubits=num_qubits, working_qubits=keep, basis_index=probe_index)
+
+		if kind == "unitary":
+			candidate_out = candidate_matrix @ psi
+			target_out = target_matrix @ psi
+			candidate_rho = np.outer(candidate_out, candidate_out.conjugate())
+			target_rho = np.outer(target_out, target_out.conjugate())
+		elif kind == "channel":
+			candidate_rho = apply_channel_to_state(candidate_matrix, psi)
+			target_rho = apply_channel_to_state(target_matrix, psi)
+		else:
+			raise ValueError(f"Unsupported target_kind: {target_kind}")
+
+		candidate_reduced = partial_trace_density_matrix(candidate_rho, num_qubits=num_qubits, keep_qubits=keep)
+		target_reduced = partial_trace_density_matrix(target_rho, num_qubits=num_qubits, keep_qubits=keep)
+
+		fidelity_acc += fidelity_similarity(candidate_reduced, target_reduced)
+		frobenius_acc += frobenius_similarity(candidate_reduced, target_reduced)
+
+	return fidelity_acc / probe_count, frobenius_acc / probe_count
+
+
 def state_fidelity(rho_out: np.ndarray, target_state: np.ndarray) -> float:
 	"""Compute ⟨φ|ρ_out|φ⟩ — overlap of output density matrix with target pure state.
 

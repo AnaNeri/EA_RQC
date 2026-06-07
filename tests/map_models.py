@@ -18,3 +18,5 @@ class TestEvolutionaryMappingResult:
         assert result.best_cluster == [0, 1]
         assert result.best_fitness == 1.5
         assert result.generations_run == 4
+        assert result.top_clusters == []
+        assert result.top_fitness_scores == []

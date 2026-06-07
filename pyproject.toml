@@ -9,7 +9,10 @@ description = "Evolutionary Algorithm for Robust Quantum Circuits"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "matplotlib>=3.10.9",
     "qiskit>=2.4.1",
+    "qiskit-aer>=0.17.2",
+    "qiskit-ibm-runtime>=0.47.0",
 ]
 
 [project.optional-dependencies]

@@ -24,6 +24,9 @@ class TestEvolutionaryBestClusters:
         assert len(result.fitness_scores) == 4
         assert len(result.best_cluster) == 3
         assert all(0 <= qubit < 6 for qubit in result.best_cluster)
+        assert len(result.top_clusters) == 3
+        assert len(result.top_fitness_scores) == 3
+        assert result.top_clusters[0] == result.best_cluster
 
     def test_skips_evolution_when_noise_model_is_none(self):
         result = evolutionary_best_clusters(
@@ -41,3 +44,4 @@ class TestEvolutionaryBestClusters:
 
         assert result.generations_run == 0
         assert len(result.population) == 4
+        assert len(result.top_clusters) == 3

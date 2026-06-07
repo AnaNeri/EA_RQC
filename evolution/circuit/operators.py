@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from random import Random
-from typing import Sequence
+from typing import Any, Sequence
 
 from circuit.entities.circuit_list import CircuitGate, CircuitList
 
@@ -34,14 +34,32 @@ def _gate_weight(gate: CircuitGate) -> float:
 		weight += 0.25
 	if gate.immutable:
 		weight += 1.0
+	if gate.block_id is not None:
+		weight += 0.5
 	return weight
+
+
+def _coerce_split_around_blocks(gates: Sequence[CircuitGate], split: int) -> int:
+	"""Move split to a block boundary so fallback crossover won't cut a block."""
+
+	if split <= 0 or split >= len(gates):
+		return split
+	left = gates[split - 1]
+	right = gates[split]
+	if left.block_id is None or left.block_id != right.block_id:
+		return split
+	block_id = left.block_id
+	adjusted = split
+	while adjusted < len(gates) and gates[adjusted].block_id == block_id:
+		adjusted += 1
+	return adjusted
 
 
 def weighted_lcs_indices(parent1: CircuitList, parent2: CircuitList) -> list[tuple[int, int]]:
 	"""Return index matches from a weighted LCS over gate signatures."""
 
-	sig1 = parent1.signatures(include_depth=False)
-	sig2 = parent2.signatures(include_depth=False)
+	sig1 = parent1.signatures(include_depth=False, include_block=True)
+	sig2 = parent2.signatures(include_depth=False, include_block=True)
 	n = len(sig1)
 	m = len(sig2)
 
@@ -122,6 +140,7 @@ def _remap_gate_to_cluster(gate: CircuitGate, source_cluster: Sequence[int], tar
 		parameters=gate.parameters,
 		depth=gate.depth,
 		immutable=gate.immutable,
+		block_id=gate.block_id,
 	)
 
 
@@ -160,8 +179,8 @@ def probabilistic_anchor_crossover(
 	blocks = _blocks_from_matches(matches, parent1, parent2)
 
 	if not blocks:
-		split1 = rng.randrange(len(parent1.gates) + 1)
-		split2 = rng.randrange(len(parent2.gates) + 1)
+		split1 = _coerce_split_around_blocks(parent1.gates, rng.randrange(len(parent1.gates) + 1))
+		split2 = _coerce_split_around_blocks(parent2.gates, rng.randrange(len(parent2.gates) + 1))
 		child1 = CircuitList(
 			gates=parent1.gates[:split1] + _remap_gates_to_cluster(
 				parent2.gates[split2:],
@@ -298,6 +317,10 @@ def mutate_circuit(
 	device_qubits: int,
 	mutation_rate: float,
 	gate_catalog: Sequence[str],
+	candidate_clusters: Sequence[Sequence[int]] | None = None,
+	candidate_cluster_weights: Sequence[float] | None = None,
+	coupling_graph: Any = None,
+	enforce_connectivity_on_cluster_switch: bool = False,
 	seed: int | None = None,
 ) -> CircuitList:
 	"""Mutate a circuit with add/remove/change-parameter/change-cluster moves."""
@@ -311,6 +334,72 @@ def mutate_circuit(
 
 	if rng.random() > mutation_rate:
 		return _finalize(child)
+
+	def _edge_exists(source: int, target: int) -> bool:
+		if source == target:
+			return False
+		if coupling_graph is None:
+			return True
+		if hasattr(coupling_graph, "get_edge_data"):
+			return coupling_graph.get_edge_data(source, target, default=None) is not None
+		if isinstance(coupling_graph, dict):
+			return (source, target) in coupling_graph or (target, source) in coupling_graph
+		return True
+
+	def _normalise_candidate_clusters() -> list[tuple[int, ...]]:
+		if not candidate_clusters:
+			return []
+		normalised: list[tuple[int, ...]] = []
+		seen: set[tuple[int, ...]] = set()
+		for cluster in candidate_clusters:
+			cluster_tuple = tuple(sorted(int(qubit) for qubit in cluster))
+			if len(cluster_tuple) != len(child.cluster):
+				continue
+			if len(set(cluster_tuple)) != len(cluster_tuple):
+				continue
+			if any(qubit < 0 or qubit >= device_qubits for qubit in cluster_tuple):
+				continue
+			if cluster_tuple in seen:
+				continue
+			seen.add(cluster_tuple)
+			normalised.append(cluster_tuple)
+		return normalised
+
+	def _normalise_candidate_weights(count: int) -> list[float]:
+		if count <= 0:
+			return []
+		if candidate_cluster_weights is None or len(candidate_cluster_weights) != count:
+			return [1.0] * count
+		weights = [max(0.0, float(weight)) for weight in candidate_cluster_weights]
+		if not any(weights):
+			return [1.0] * count
+		return weights
+
+	def _try_cluster_switch(new_cluster: tuple[int, ...]) -> bool:
+		if not child.cluster or tuple(child.cluster) == tuple(new_cluster):
+			return False
+		remap = {old: new for old, new in zip(child.cluster, new_cluster)}
+		remapped_gates: list[CircuitGate] = []
+		for gate in child.gates:
+			remapped_qubits = tuple(remap.get(qubit, qubit) for qubit in gate.qubits)
+			if len(remapped_qubits) >= 2 and len(set(remapped_qubits)) != len(remapped_qubits):
+				return False
+			if enforce_connectivity_on_cluster_switch and len(remapped_qubits) == 2:
+				if not _edge_exists(remapped_qubits[0], remapped_qubits[1]):
+					return False
+			remapped_gates.append(
+				CircuitGate.from_values(
+					name=gate.name,
+					qubits=remapped_qubits,
+					parameters=gate.parameters,
+					depth=gate.depth,
+					immutable=gate.immutable,
+					block_id=gate.block_id,
+				)
+			)
+		child.gates = remapped_gates
+		child.cluster = tuple(new_cluster)
+		return True
 
 	mutation = rng.choice(["add", "remove", "change_params", "change_cluster"])
 	parameterized_1 = {"rx", "ry", "rz", "p", "phase"}
@@ -337,29 +426,27 @@ def mutate_circuit(
 				parameters=tuple(updated),
 				depth=gate.depth,
 				immutable=gate.immutable,
+				block_id=gate.block_id,
 			)
 			return _finalize(child)
 
 	if mutation == "change_cluster" and child.cluster:
-		cluster_size = len(child.cluster)
-		if cluster_size <= device_qubits:
-			new_cluster = tuple(sorted(rng.sample(range(device_qubits), cluster_size)))
-			remap = {old: new for old, new in zip(child.cluster, new_cluster)}
-			remapped_gates: list[CircuitGate] = []
-			for gate in child.gates:
-				remapped_qubits = tuple(remap.get(qubit, qubit) for qubit in gate.qubits)
-				remapped_gates.append(
-					CircuitGate.from_values(
-						name=gate.name,
-						qubits=remapped_qubits,
-						parameters=gate.parameters,
-						depth=gate.depth,
-						immutable=gate.immutable,
-					)
-				)
-			child.gates = remapped_gates
-			child.cluster = new_cluster
-			return _finalize(child)
+		candidate_pool = _normalise_candidate_clusters()
+		if candidate_pool:
+			weights = _normalise_candidate_weights(len(candidate_pool))
+			remaining = list(range(len(candidate_pool)))
+			while remaining:
+				remaining_weights = [weights[index] for index in remaining]
+				selected_index = rng.choices(remaining, weights=remaining_weights, k=1)[0]
+				remaining.remove(selected_index)
+				if _try_cluster_switch(candidate_pool[selected_index]):
+					return _finalize(child)
+		else:
+			cluster_size = len(child.cluster)
+			if cluster_size <= device_qubits:
+				new_cluster = tuple(sorted(rng.sample(range(device_qubits), cluster_size)))
+				if _try_cluster_switch(new_cluster):
+					return _finalize(child)
 
 	cluster_list = list(child.cluster) if child.cluster else [0]
 	new_gate = random_circuit(

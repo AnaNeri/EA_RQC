@@ -22,6 +22,7 @@ def evolutionary_best_clusters(
     mutation_rate: float,
     coupling_graph: Any = None,
     prioritize: str = "qubits",
+    top_k: int = 3,
     seed: int | None = None,
 ) -> EvolutionaryMappingResult:
     rng = as_rng(seed)
@@ -65,8 +66,14 @@ def evolutionary_best_clusters(
         best_cluster = []
         best_fitness = 0.0
 
-    ranked_population = [individual for individual, _ in sorted(zip(current_population, final_fitness), key=lambda item: item[1], reverse=True)]
-    ranked_scores = sorted(final_fitness, reverse=True)
+    ranked_pairs = sorted(zip(current_population, final_fitness), key=lambda item: item[1], reverse=True)
+    ranked_population = [individual for individual, _ in ranked_pairs]
+    ranked_scores = [score for _, score in ranked_pairs]
+
+    effective_top_k = max(1, int(top_k))
+    top_pairs = ranked_pairs[:effective_top_k]
+    top_clusters = [individual for individual, _ in top_pairs]
+    top_fitness_scores = [score for _, score in top_pairs]
 
     return EvolutionaryMappingResult(
         population=ranked_population,
@@ -74,4 +81,6 @@ def evolutionary_best_clusters(
         best_cluster=best_cluster,
         best_fitness=best_fitness,
         generations_run=generation,
+        top_clusters=top_clusters,
+        top_fitness_scores=top_fitness_scores,
     )

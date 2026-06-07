@@ -54,10 +54,60 @@ class CircuitEvolutionConfig:
 	qpc_mode: str = "exact"  # "exact", "approx", or "mixed"
 	# Sample-based synthesis weight (0 = disabled)
 	sample_weight: float = 0.0
+	# Optional subset of qubits used for behavior fitness (ancillas excluded)
+	working_qubits: tuple[int, ...] = ()
+	# Optional top-k cluster candidates (typically from cluster mapping stage).
+	candidate_clusters: tuple[tuple[int, ...], ...] = ()
+	candidate_cluster_weights: tuple[float, ...] = ()
+	# Optional connectivity guard for cluster-switch mutation.
+	coupling_graph: Any = None
+	enforce_cluster_connectivity: bool = False
 
 
 def _as_rng(seed: int | None) -> Random:
 	return Random(seed)
+
+
+def _normalise_candidate_clusters(config: CircuitEvolutionConfig) -> tuple[tuple[int, ...], ...]:
+	clusters: list[tuple[int, ...]] = []
+	seen: set[tuple[int, ...]] = set()
+	for cluster in config.candidate_clusters:
+		normalised = tuple(sorted(int(qubit) for qubit in cluster))
+		if len(normalised) != config.cluster_size:
+			continue
+		if len(set(normalised)) != len(normalised):
+			continue
+		if any(qubit < 0 or qubit >= config.device_qubits for qubit in normalised):
+			continue
+		if normalised in seen:
+			continue
+		seen.add(normalised)
+		clusters.append(normalised)
+	return tuple(clusters)
+
+
+def _cluster_choice_weights(clusters: Sequence[tuple[int, ...]], raw_weights: Sequence[float]) -> list[float]:
+	if not clusters:
+		return []
+	if len(raw_weights) != len(clusters):
+		return [1.0] * len(clusters)
+	weights = [max(0.0, float(weight)) for weight in raw_weights]
+	if not any(weights):
+		return [1.0] * len(clusters)
+	return weights
+
+
+def _pick_cluster(
+	rng: Random,
+	*,
+	candidate_clusters: Sequence[tuple[int, ...]],
+	candidate_weights: Sequence[float],
+	device_qubits: int,
+	cluster_size: int,
+) -> tuple[int, ...]:
+	if candidate_clusters:
+		return tuple(rng.choices(candidate_clusters, weights=candidate_weights, k=1)[0])
+	return tuple(sorted(rng.sample(range(device_qubits), cluster_size)))
 
 
 def _population_diversity(population: list[CircuitList]) -> float:
@@ -72,6 +122,7 @@ def _circuit_cache_key(
 	qpc_enabled: bool = False,
 	qpc_mode: str = "exact",
 	sample_weight: float = 0.0,
+	working_qubits: Sequence[int] | None = None,
 ) -> tuple[object, ...]:
 	return (
 		tuple(circuit.cluster),
@@ -81,6 +132,7 @@ def _circuit_cache_key(
 		qpc_enabled,
 		qpc_mode,
 		round(sample_weight, 6),
+		tuple(sorted(int(qubit) for qubit in (working_qubits or ()))),
 	)
 
 
@@ -100,6 +152,7 @@ def _evaluate_population(
 	qpc_mode: str = "exact",
 	samples: SampleTarget | None = None,
 	sample_weight: float = 0.0,
+	working_qubits: Sequence[int] | None = None,
 	cache: dict[tuple[object, ...], CircuitFitnessBreakdown] | None = None,
 ) -> list[CircuitFitnessBreakdown]:
 	if cache is None:
@@ -107,7 +160,7 @@ def _evaluate_population(
 
 	breakdowns: list[CircuitFitnessBreakdown] = []
 	for circuit in population:
-		key = _circuit_cache_key(circuit, qpc_enabled, qpc_mode, sample_weight)
+		key = _circuit_cache_key(circuit, qpc_enabled, qpc_mode, sample_weight, working_qubits)
 		if key not in cache:
 			cache[key] = fitness_circuit(
 				circuit,
@@ -124,6 +177,7 @@ def _evaluate_population(
 				qpc_mode=qpc_mode,
 				samples=samples,
 				sample_weight=sample_weight,
+				working_qubits=working_qubits,
 			)
 		breakdowns.append(cache[key])
 	return breakdowns
@@ -170,9 +224,17 @@ def _build_initial_population(
 	gate_catalog: Sequence[str],
 	rng: Random,
 ) -> list[CircuitList]:
+	candidate_clusters = _normalise_candidate_clusters(config)
+	candidate_weights = _cluster_choice_weights(candidate_clusters, config.candidate_cluster_weights)
 	population: list[CircuitList] = []
 	for _ in range(config.population_size):
-		cluster = tuple(sorted(rng.sample(range(config.device_qubits), config.cluster_size)))
+		cluster = _pick_cluster(
+			rng,
+			candidate_clusters=candidate_clusters,
+			candidate_weights=candidate_weights,
+			device_qubits=config.device_qubits,
+			cluster_size=config.cluster_size,
+		)
 		population.append(
 			random_circuit(
 				cluster=cluster,
@@ -196,6 +258,8 @@ def evolutionary_best_circuit(
 	seed: int | None = None,
 ) -> CircuitEvolutionResult:
 	rng = _as_rng(seed)
+	candidate_clusters = _normalise_candidate_clusters(config)
+	candidate_weights = _cluster_choice_weights(candidate_clusters, config.candidate_cluster_weights)
 	population = _build_initial_population(config, gate_catalog, rng)
 
 	effective_target_kind = config.target_kind
@@ -228,6 +292,7 @@ def evolutionary_best_circuit(
 			qpc_mode=config.qpc_mode,
 			samples=samples,
 			sample_weight=config.sample_weight,
+			working_qubits=config.working_qubits,
 			cache=fitness_cache,
 		)
 		scores = [entry.total_fitness for entry in breakdowns]
@@ -267,6 +332,10 @@ def evolutionary_best_circuit(
 				device_qubits=config.device_qubits,
 				mutation_rate=config.mutation_rate,
 				gate_catalog=gate_catalog,
+				candidate_clusters=candidate_clusters,
+				candidate_cluster_weights=candidate_weights,
+				coupling_graph=config.coupling_graph,
+				enforce_connectivity_on_cluster_switch=config.enforce_cluster_connectivity,
 				seed=rng.randrange(2**32),
 			)
 			child2 = mutate_circuit(
@@ -274,6 +343,10 @@ def evolutionary_best_circuit(
 				device_qubits=config.device_qubits,
 				mutation_rate=config.mutation_rate,
 				gate_catalog=gate_catalog,
+				candidate_clusters=candidate_clusters,
+				candidate_cluster_weights=candidate_weights,
+				coupling_graph=config.coupling_graph,
+				enforce_connectivity_on_cluster_switch=config.enforce_cluster_connectivity,
 				seed=rng.randrange(2**32),
 			)
 			children.append(child1)
@@ -294,6 +367,7 @@ def evolutionary_best_circuit(
 			qpc_mode=config.qpc_mode,
 			samples=samples,
 			sample_weight=config.sample_weight,
+			working_qubits=config.working_qubits,
 			cache=fitness_cache,
 		)
 
@@ -319,6 +393,7 @@ def evolutionary_best_circuit(
 		qpc_mode=config.qpc_mode,
 		samples=samples,
 		sample_weight=config.sample_weight,
+		working_qubits=config.working_qubits,
 		cache=fitness_cache,
 	)
 	best_index = max(range(len(population)), key=lambda idx: final_breakdowns[idx].total_fitness)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 Individual = list[int]
@@ -18,3 +18,5 @@ class EvolutionaryMappingResult:
     best_cluster: Individual
     best_fitness: float
     generations_run: int
+    top_clusters: Population = field(default_factory=list)
+    top_fitness_scores: list[float] = field(default_factory=list)

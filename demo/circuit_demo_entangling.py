@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
 from circuit.entities.circuit_list import CircuitGate, CircuitList
+from adapters.qiskit import parse_qiskit_backend_gate_catalog, parse_qiskit_backend_noise_model
+from demo.utils import DemoNoiseModel, load_fake_kyiv_device_data
+from evolution.cluster.evolutionary import evolutionary_best_clusters
 from evolution.circuit.evolutionary import CircuitEvolutionConfig, evolutionary_best_circuit
 from evolution.circuit.fitness import fitness_circuit
 from evolution.circuit.matrix_eval import circuit_to_matrix, fidelity_similarity, frobenius_similarity
@@ -21,20 +25,11 @@ except ImportError:  # pragma: no cover - optional runtime dependency for the de
 
 
 @dataclass(frozen=True)
-class DemoNoiseModel:
-    qubit_error_rates: dict[int, float]
+class DemoCouplingGraph:
+    edges: dict[tuple[int, int], float]
 
-
-@dataclass(frozen=True)
-class DemoConfig:
-    basis_gates: list[str]
-
-
-class DemoBackend:
-    """Small backend-like object to demonstrate base-gate extraction."""
-
-    def configuration(self):
-        return DemoConfig(basis_gates=["id", "rz", "sx", "x", "h", "ecr", "measure", "barrier"])
+    def get_edge_data(self, source: int, target: int, default=None):
+        return self.edges.get((source, target), self.edges.get((target, source), default))
 
 
 def _gate(name: str, qubits: tuple[int, ...], depth: int, parameter: float | None = None) -> CircuitGate:
@@ -56,10 +51,13 @@ def print_matrix(label: str, matrix: np.ndarray) -> None:
     print(np.array2string(matrix, precision=4, suppress_small=True))
 
 
-def _extract_catalog_from_backend(backend: DemoBackend) -> list[str]:
-    basis = backend.configuration().basis_gates
-    excluded = {"measure", "barrier", "delay", "reset", "snapshot"}
-    return [name.lower().strip() for name in basis if name.lower().strip() not in excluded]
+def print_top_clusters(clusters: list[list[int]], scores: list[float]) -> None:
+    for index, cluster in enumerate(clusters, start=1):
+        score = scores[index - 1] if index - 1 < len(scores) else 0.0
+        print(f"  top-{index}: cluster={cluster}, fitness={score:.6f}")
+
+
+# demo utilities (backend loader, gate sanitization) moved to demo/utils.py
 
 
 def _localize_circuit(circuit: CircuitList) -> CircuitList:
@@ -166,32 +164,54 @@ def _print_transpile_comparison(best_circuit: CircuitList, target: CircuitList, 
     )
 
 
-def main() -> None:
-    noise_model = DemoNoiseModel(qubit_error_rates={0: 0.01, 1: 0.012, 2: 0.02, 3: 0.03})
-    gate_catalog = _extract_catalog_from_backend(DemoBackend())
-    print(f"Device-derived base gate catalog: {gate_catalog}")
+def run_experiment(
+    device_qubits: int = 1000,
+    mapping_generations: int = 8,
+    mapping_population: int = 12,
+    circuit_generations: int = 50,
+    circuit_population: int = 30,
+):
+    """Run the entangling demo and return structured results for CLI/UI."""
+    noise_model, gate_catalog, backend_name = load_fake_kyiv_device_data(device_qubits=device_qubits)
+
+    coupling_graph = DemoCouplingGraph(
+        edges={(0, 1): 0.002, (1, 2): 0.003, (2, 3): 0.004, (0, 2): 0.007, (1, 3): 0.009}
+    )
+    mapping = evolutionary_best_clusters(
+        device_qubits=device_qubits,
+        target_qubits=2,
+        max_generation=mapping_generations,
+        population=mapping_population,
+        noise_model=noise_model,
+        type_ranking="linear",
+        lambda_ratio=2,
+        crossover_rate=0.85,
+        mutation_rate=0.2,
+        coupling_graph=coupling_graph,
+        prioritize="both",
+        top_k=3,
+        seed=321,
+    )
+
+    candidate_clusters = tuple(tuple(cluster) for cluster in mapping.top_clusters)
+    candidate_cluster_weights = tuple(mapping.top_fitness_scores)
+    best_cluster = tuple(mapping.best_cluster) if mapping.best_cluster else (0, 1)
 
     target = CircuitList(
-        gates=[
-            _gate("h", (0,), 1),
-            _gate("cx", (0, 1), 2),
-            _gate("x", (1,), 3),
-        ],
-        cluster=(0, 1),
+        gates=[_gate("h", (best_cluster[0],), 1), _gate("cx", (best_cluster[0], best_cluster[1]), 2), _gate("x", (best_cluster[1],), 3)],
+        cluster=best_cluster,
         max_depth=4,
         max_gates=6,
     )
 
-    print("=== Entangling Target Circuit ===")
-    print_circuit("Target", target)
-    target_matrix = circuit_to_matrix(target, target_kind="unitary")
-    print_matrix("Target matrix", target_matrix)
+    localized_target = _localize_circuit(target)
+    target_matrix = circuit_to_matrix(localized_target, target_kind="unitary")
 
     config = CircuitEvolutionConfig(
-        device_qubits=4,
+        device_qubits=device_qubits,
         cluster_size=2,
-        population_size=25,
-        max_generations=20,
+        population_size=circuit_population,
+        max_generations=circuit_generations,
         lambda_ratio=2,
         crossover_rate=0.9,
         mutation_rate=0.45,
@@ -205,25 +225,13 @@ def main() -> None:
         behavior_weight=0.9,
         robustness_weight=0.05,
         complexity_weight=0.05,
+        candidate_clusters=candidate_clusters,
+        candidate_cluster_weights=candidate_cluster_weights,
+        coupling_graph=coupling_graph,
+        enforce_cluster_connectivity=True,
     )
 
-    print(
-        "Run controls: "
-        f"max_generations={config.max_generations}, "
-        f"diversity_floor={config.diversity_floor}, "
-        f"stagnation_generations={config.stagnation_generations}, "
-        f"target_fitness_threshold={config.target_fitness_threshold}"
-    )
-    print(
-        "Fitness weights: "
-        f"behavior={config.behavior_weight}, "
-        f"robustness={config.robustness_weight}, "
-        f"complexity={config.complexity_weight}, "
-        f"fidelity={config.fidelity_weight}, "
-        f"frobenius={config.frobenius_weight}"
-    )
-
-    result = evolutionary_best_circuit(
+    ea_result = evolutionary_best_circuit(
         config=config,
         gate_catalog=gate_catalog,
         target_circuit=None,
@@ -232,6 +240,45 @@ def main() -> None:
         seed=321,
     )
 
+    fitness = fitness_circuit(
+        ea_result.best_circuit,
+        target=None,
+        target_matrix=target_matrix,
+        target_kind="unitary",
+        noise_model=noise_model,
+    )
+
+    return {
+        "noise_model": noise_model,
+        "gate_catalog": gate_catalog,
+        "backend_name": backend_name,
+        "mapping": mapping,
+        "target": target,
+        "localized_target": localized_target,
+        "target_matrix": target_matrix,
+        "ea_result": ea_result,
+        "fitness": fitness,
+    }
+
+
+def main() -> None:
+    # For CLI/main, run through the structured run_experiment and print results
+    results = run_experiment()
+    print(f"Noise model source: {results.get('backend_name')}")
+    print(f"Device-derived base gate catalog: {results.get('gate_catalog')}")
+
+    mapping = results.get("mapping")
+    print("\n=== Cluster Mapping (Top-3) ===")
+    print_top_clusters(mapping.top_clusters, mapping.top_fitness_scores)
+
+    target = results.get("target")
+    print("=== Entangling Target Circuit ===")
+    print_circuit("Target", target)
+    localized_target = results.get("localized_target")
+    target_matrix = results.get("target_matrix")
+    print_matrix("Target matrix", target_matrix)
+
+    result = results.get("ea_result")
     print("\n=== Circuit EA (Per generation diversity) ===")
     for generation, diversity in enumerate(result.diversity_history, start=1):
         print(f"  generation {generation:02d}: diversity={diversity:.3f}")
@@ -242,13 +289,7 @@ def main() -> None:
     evolved_matrix = circuit_to_matrix(localized_best, target_kind="unitary")
     print_matrix("Evolved matrix (localized)", evolved_matrix)
 
-    score = fitness_circuit(
-        result.best_circuit,
-        target=None,
-        target_matrix=target_matrix,
-        target_kind="unitary",
-        noise_model=noise_model,
-    )
+    score = results.get("fitness")
     print("\n=== Best Fitness Breakdown (vs entangling target) ===")
     print(f"behavior={score.behavior_score:.4f}")
     print(f"robustness={score.robustness_score:.4f}")
@@ -258,7 +299,8 @@ def main() -> None:
     print(f"stop reason={result.stop_reason}")
     print(f"cache entries={result.cache_entries}")
 
-    _print_transpile_comparison(result.best_circuit, target, gate_catalog, target_matrix)
+    # Use the localized target for transpiler comparisons (keeps qubit indices small)
+    _print_transpile_comparison(result.best_circuit, localized_target, results.get("gate_catalog"), target_matrix)
 
 
 if __name__ == "__main__":

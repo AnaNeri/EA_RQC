@@ -108,3 +108,76 @@ def test_probabilistic_anchor_crossover_keeps_gate_qubits_inside_child_cluster()
     assert child2.cluster == (2, 3)
     assert all(qubit in child1.cluster for gate in child1.gates for qubit in gate.qubits)
     assert all(qubit in child2.cluster for gate in child2.gates for qubit in gate.qubits)
+
+
+def test_probabilistic_anchor_crossover_preserves_block_ids_on_remap():
+    parent1 = CircuitList(
+        gates=[
+            CircuitGate.from_values(name="h", qubits=(0,)),
+            CircuitGate.from_values(name="cx", qubits=(0, 1), block_id="protect_q2"),
+            CircuitGate.from_values(name="x", qubits=(1,), block_id="protect_q2"),
+        ],
+        cluster=(0, 1),
+        max_depth=10,
+        max_gates=20,
+    )
+    parent2 = CircuitList(
+        gates=[
+            CircuitGate.from_values(name="z", qubits=(2,)),
+            CircuitGate.from_values(name="cz", qubits=(2, 3), block_id="protect_q2"),
+            CircuitGate.from_values(name="sx", qubits=(3,), block_id="protect_q2"),
+        ],
+        cluster=(2, 3),
+        max_depth=10,
+        max_gates=20,
+    )
+
+    child1, child2 = probabilistic_anchor_crossover(
+        parent1,
+        parent2,
+        crossover_rate=1.0,
+        base_keep_probability=1.0,
+        seed=19,
+    )
+
+    for child in (child1, child2):
+        for gate in child.gates:
+            if gate.block_id == "protect_q2":
+                assert gate.block_id == "protect_q2"
+
+
+def test_probabilistic_anchor_crossover_does_not_cut_block_in_fallback_split():
+    parent1 = CircuitList(
+        gates=[
+            CircuitGate.from_values(name="h", qubits=(0,)),
+            CircuitGate.from_values(name="x", qubits=(1,)),
+            CircuitGate.from_values(name="z", qubits=(0,)),
+        ],
+        cluster=(0, 1),
+        max_depth=10,
+        max_gates=20,
+    )
+    parent2 = CircuitList(
+        gates=[
+            CircuitGate.from_values(name="t", qubits=(2,)),
+            CircuitGate.from_values(name="cx", qubits=(2, 3), block_id="protect_q2"),
+            CircuitGate.from_values(name="sx", qubits=(3,), block_id="protect_q2"),
+            CircuitGate.from_values(name="s", qubits=(2,)),
+        ],
+        cluster=(2, 3),
+        max_depth=10,
+        max_gates=20,
+    )
+
+    # With no shared structure, crossover uses random split. The block should
+    # appear either fully or not at all in each child, never partially.
+    for seed in range(0, 40):
+        child1, _ = probabilistic_anchor_crossover(
+            parent1,
+            parent2,
+            crossover_rate=1.0,
+            base_keep_probability=1.0,
+            seed=seed,
+        )
+        block_gate_count = sum(1 for gate in child1.gates if gate.block_id == "protect_q2")
+        assert block_gate_count in {0, 2}

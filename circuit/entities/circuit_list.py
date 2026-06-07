@@ -15,6 +15,7 @@ class CircuitGate:
 	parameters: tuple[float, ...] = ()
 	depth: int = 0
 	immutable: bool = False
+	block_id: str | None = None
 
 	@staticmethod
 	def from_values(
@@ -23,6 +24,7 @@ class CircuitGate:
 		parameters: Sequence[float] | None = None,
 		depth: int = 0,
 		immutable: bool = False,
+		block_id: str | None = None,
 	) -> "CircuitGate":
 		return CircuitGate(
 			name=str(name).lower().strip(),
@@ -30,15 +32,24 @@ class CircuitGate:
 			parameters=tuple(float(param) for param in (parameters or ())),
 			depth=int(depth),
 			immutable=bool(immutable),
+			block_id=None if block_id is None else str(block_id),
 		)
 
-	def signature(self, *, precision: int = 3, include_depth: bool = False) -> tuple[object, ...]:
+	def signature(
+		self,
+		*,
+		precision: int = 3,
+		include_depth: bool = False,
+		include_block: bool = False,
+	) -> tuple[object, ...]:
 		"""Signature used by sequence matching algorithms."""
 
 		params = tuple(round(value, precision) for value in self.parameters)
 		signature: list[object] = [self.name, self.qubits, params]
 		if include_depth:
 			signature.append(self.depth)
+		if include_block:
+			signature.append(self.block_id)
 		return tuple(signature)
 
 
@@ -92,6 +103,7 @@ class CircuitList:
 					parameters=gate.parameters,
 					depth=depth,
 					immutable=gate.immutable,
+					block_id=gate.block_id,
 				)
 			)
 		self.gates = relayered
@@ -103,6 +115,19 @@ class CircuitList:
 		if self.max_depth > 0:
 			self.gates = [gate for gate in self.gates if gate.depth <= self.max_depth]
 
-	def signatures(self, *, precision: int = 3, include_depth: bool = False) -> list[tuple[object, ...]]:
-		return [gate.signature(precision=precision, include_depth=include_depth) for gate in self.gates]
+	def signatures(
+		self,
+		*,
+		precision: int = 3,
+		include_depth: bool = False,
+		include_block: bool = False,
+	) -> list[tuple[object, ...]]:
+		return [
+			gate.signature(
+				precision=precision,
+				include_depth=include_depth,
+				include_block=include_block,
+			)
+			for gate in self.gates
+		]
 
