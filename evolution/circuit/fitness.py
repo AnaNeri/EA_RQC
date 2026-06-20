@@ -44,13 +44,17 @@ def _gate_noise_penalty(circuit: CircuitList, noise_model: Any) -> float:
 	rates = getattr(noise_model, "qubit_error_rates", noise_model)
 	if not isinstance(rates, dict):
 		return 0.0
+	gate_error_rates = getattr(noise_model, "gate_error_rates", None)
 
 	total = 0.0
 	count = 0
 	for gate in circuit.gates:
+		gate_factor = 1.0
+		if gate_error_rates is not None:
+			gate_factor = float(gate_error_rates.get(gate.name.lower().strip(), 0.0))
 		for qubit in gate.qubits:
 			value = rates.get(qubit, rates.get(str(qubit), 0.0))
-			total += float(value)
+			total += float(value) * gate_factor
 			count += 1
 
 	return total / count if count else 0.0
@@ -128,8 +132,10 @@ def _behavior_score_with_qpc(
 	
 	# Get error rates from noise model
 	error_rates = {}
+	gate_error_rates = None
 	if noise_model is not None:
 		error_rates = getattr(noise_model, "qubit_error_rates", {})
+		gate_error_rates = getattr(noise_model, "gate_error_rates", None)
 	
 	# Ideal channel
 	ideal_unitary = circuit_to_matrix(circuit, target_kind="unitary", num_qubits=num_qubits)
@@ -143,6 +149,7 @@ def _behavior_score_with_qpc(
 		faulty_channel = circuit_to_faulty_channel(
 			circuit,
 			error_rates=error_rates,
+			gate_error_rates=gate_error_rates,
 			num_qubits=num_qubits,
 		)
 		
@@ -160,11 +167,13 @@ def _behavior_score_with_qpc(
 			approx_channel = circuit_to_faulty_channel(
 				circuit,
 				error_rates={q: approx_p for q in error_rates},
+				gate_error_rates=gate_error_rates,
 				num_qubits=num_qubits,
 			)
 			exact_channel = circuit_to_faulty_channel(
 				circuit,
 				error_rates=error_rates,
+				gate_error_rates=gate_error_rates,
 				num_qubits=num_qubits,
 			)
 			approximation_error = float(np.linalg.norm(approx_channel - exact_channel, "fro"))
@@ -178,10 +187,14 @@ def _behavior_score_with_qpc(
 			target_for_comparison = unitary_to_superoperator(effective_target_matrix)
 		else:
 			target_for_comparison = effective_target_matrix
-		
+
+		# Exact mode evaluates the explicit composed faulty channel for the circuit.
+		# It does not call mix_channels() directly; the same algebraic rules still
+		# come from linear channel/superoperator operations under the hood.
 		candidate_matrix = circuit_to_faulty_channel(
 			circuit,
 			error_rates=error_rates,
+			gate_error_rates=gate_error_rates,
 			num_qubits=num_qubits,
 		)
 		comparison_kind = "channel"
@@ -273,11 +286,18 @@ def _sample_score(
 		raise ValueError("samples.num_qubits must match len(working_qubits)")
 
 	error_rates: dict[int, float] = {}
+	gate_error_rates: dict[str, float] | None = None
 	if noise_model is not None:
 		error_rates = getattr(noise_model, "qubit_error_rates", {})
+		gate_error_rates = getattr(noise_model, "gate_error_rates", None)
 
 	if qpc_enabled:
-		superop = circuit_to_faulty_channel(circuit, error_rates=error_rates, num_qubits=full_num_qubits)
+		superop = circuit_to_faulty_channel(
+			circuit,
+			error_rates=error_rates,
+			gate_error_rates=gate_error_rates,
+			num_qubits=full_num_qubits,
+		)
 		scores = []
 		for s in samples.samples:
 			input_state_full = _embed_working_state_on_full_register(

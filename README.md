@@ -13,36 +13,39 @@ Requirements
 
 Installation
 1. Clone the repository.
-2. Install in editable mode:
+2. Install dependencies:
 
 ```bash
-pip install -e .
+uv sync
 ```
 
 3. (Optional) Install test dependencies:
 
 ```bash
-pip install -e .[test]
+uv sync --extra test
 ```
 
 Quick start
 - Run the mapping demo:
 
 ```bash
-python -m demo.map_demo
+uv run -m demo.map_demo
 ```
 
 - Run a circuit demo (examples available under `demo/`):
 
 ```bash
-python -m demo.circuit_demo
-python -m demo.circuit_demo_grover_oracle
+uv run -m demo.circuit_demo
+uv run -m demo.circuit_demo_grover_oracle
 ```
+
+- Full demo catalog and per-demo purpose:
+	- See `demo/README.md`
 
 - Run the full test suite:
 
 ```bash
-pytest
+uv run pytest
 ```
 
 Main API

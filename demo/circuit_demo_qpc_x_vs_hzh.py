@@ -45,8 +45,8 @@ def main() -> None:
     target_circuit = build_x_target()
     target_matrix = circuit_to_matrix(target_circuit, target_kind="unitary")
     
-    # Noise model: 1% error per gate
-    noise_model = DemoNoiseModel(qubit_error_rates={0: 0.01})
+    # Noise model: increase to 5% error per gate to make effect visible
+    noise_model = DemoNoiseModel(qubit_error_rates={0: 0.05})
     
     gate_catalog = ["h", "x", "y", "z", "sx", "rx", "ry", "rz"]
     
@@ -72,6 +72,47 @@ def main() -> None:
         frobenius_weight=0.2,
     )
     
+    # Build a seeded initial population that contains an H-Z-H sequence
+    hzh = CircuitList(
+        gates=[
+            CircuitGate.from_values("h", (0,), depth=1),
+            CircuitGate.from_values("z", (0,), depth=2),
+            CircuitGate.from_values("h", (0,), depth=3),
+        ],
+        cluster=(0,),
+        max_depth=4,
+        max_gates=5,
+    )
+
+    # Show how HZH scores under ideal vs QPC evaluation
+    from evolution.circuit.fitness import fitness_circuit
+
+    hzh_ideal_fb = fitness_circuit(
+        hzh,
+        target=target_circuit,
+        target_matrix=target_matrix,
+        target_kind="unitary",
+        noise_model=noise_model,
+        qpc_enabled=False,
+        fidelity_weight=base_config.fidelity_weight,
+        frobenius_weight=base_config.frobenius_weight,
+    )
+    hzh_qpc_fb = fitness_circuit(
+        hzh,
+        target=target_circuit,
+        target_matrix=target_matrix,
+        target_kind="unitary",
+        noise_model=noise_model,
+        qpc_enabled=True,
+        qpc_mode="exact",
+        fidelity_weight=base_config.fidelity_weight,
+        frobenius_weight=base_config.frobenius_weight,
+    )
+
+    print("HZH fitness (ideal):", f"{hzh_ideal_fb.total_fitness:.6f}")
+    print("HZH fitness (QPC)  :", f"{hzh_qpc_fb.total_fitness:.6f}")
+    print()
+
     print("--- Run 1: Standard Fitness (Ideal Unitary Only) ---")
     config_standard = CircuitEvolutionConfig(**{**base_config.__dict__, "qpc_enabled": False})
     result_standard = evolutionary_best_circuit(
@@ -81,6 +122,7 @@ def main() -> None:
         target_matrix=target_matrix,
         noise_model=noise_model,
         seed=42,
+        initial_population=[hzh],
     )
     
     print(f"Best circuit found: {len(result_standard.best_circuit.gates)} gates")
@@ -99,6 +141,7 @@ def main() -> None:
         target_matrix=target_matrix,
         noise_model=noise_model,
         seed=42,
+        initial_population=[hzh],
     )
     
     print(f"Best circuit found: {len(result_qpc.best_circuit.gates)} gates")

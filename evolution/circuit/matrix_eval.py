@@ -265,6 +265,33 @@ def depolarizing_kraus_matrices(p: float) -> list[np.ndarray]:
 	return [K0, K1, K2, K3]
 
 
+def dephasing_kraus_matrices(p: float) -> list[np.ndarray]:
+	"""Return Kraus operators for single-qubit dephasing (phase-flip) channel.
+
+	Model: with probability p apply Z, otherwise identity. Kraus form: K0 = sqrt(1-p) I, K1 = sqrt(p) Z.
+	"""
+	p = max(0.0, min(1.0, p))
+	sqrt_1mp = math.sqrt(1.0 - p)
+	sqrt_p = math.sqrt(p)
+	K0 = sqrt_1mp * np.eye(2, dtype=np.complex128)
+	K1 = sqrt_p * np.array([[1, 0], [0, -1]], dtype=np.complex128)
+	return [K0, K1]
+
+
+def amplitude_damping_kraus_matrices(p: float) -> list[np.ndarray]:
+	"""Return Kraus operators for single-qubit amplitude-damping channel.
+
+	K0 = [[1, 0], [0, sqrt(1-p)]]; K1 = [[0, sqrt(p)], [0, 0]]
+	This is often used to model thermal relaxation (T1-like) effects.
+	"""
+	p = max(0.0, min(1.0, p))
+	sqrt_1mp = math.sqrt(1.0 - p)
+	sqrt_p = math.sqrt(p)
+	K0 = np.array([[1.0, 0.0], [0.0, sqrt_1mp]], dtype=np.complex128)
+	K1 = np.array([[0.0, sqrt_p], [0.0, 0.0]], dtype=np.complex128)
+	return [K0, K1]
+
+
 def kraus_to_superoperator(kraus_ops: Sequence[np.ndarray]) -> np.ndarray:
 	"""Convert Kraus operator list to superoperator (Choi matrix form).
 	
@@ -337,6 +364,10 @@ def compose_superoperators(superop1: np.ndarray, superop2: np.ndarray) -> np.nda
 	"""Compose two superoperators sequentially: apply superop2 then superop1.
 	
 	In circuit notation: superop1 ∘ superop2 means apply superop2's channel first.
+
+	This is ordinary matrix multiplication in Liouville representation, so it is linear
+	in each argument. That linearity is what yields QPC distributive/choice-fusion laws
+	when combined with mix_channels().
 	"""
 	return superop1 @ superop2
 
@@ -345,7 +376,18 @@ def mix_channels(channel_faulty: np.ndarray, channel_ideal: np.ndarray, p: float
 	"""Probabilistic combinator at channel level: p*faulty + (1-p)*ideal.
 	
 	Returns the superoperator representing the mixture:
-	S_p = p·S_faulty + (1-p)·S_ideal.
+	S_p = p*S_faulty + (1-p)*S_ideal.
+
+	With U, V, W channel superoperators and p, q in [0, 1], this definition directly implies:
+	- Unique behavior: mix(U, U, p) = U
+	- Absence of noise: mix(U, V, 0) = V
+	- Dominance of noise: mix(U, V, 1) = U
+	- Rearrangement: mix(U, V, p) = mix(V, U, 1-p)
+	- Distributive law: mix(U, mix(V, W, q), p) = mix(mix(U, V, p), mix(U, W, p), q)
+
+	And together with compose_superoperators() linearity:
+	- Right choice-fusion: compose(mix(U, V, p), W) = mix(compose(U, W), compose(V, W), p)
+	- Left choice-fusion: compose(W, mix(U, V, p)) = mix(compose(W, U), compose(W, V), p)
 	"""
 	p = max(0.0, min(1.0, p))
 	
@@ -380,6 +422,7 @@ def circuit_to_faulty_channel(
 	circuit: CircuitList,
 	*,
 	error_rates: dict[int, float] | None = None,
+	gate_error_rates: dict[str, float] | None = None,
 	num_qubits: int | None = None,
 ) -> np.ndarray:
 	"""Build the faulty circuit channel by composing depolarizing-noisy gate channels.
@@ -425,6 +468,9 @@ def circuit_to_faulty_channel(
 		
 		# Build faulty gate channel in local space (before expansion)
 		p_error = sum(error_rates.get(q, 0.0) for q in gate.qubits) / max(len(gate.qubits), 1)
+		if gate_error_rates is not None:
+			gate_factor = float(gate_error_rates.get(gate.name.lower().strip(), 0.0))
+			p_error *= gate_factor
 		p_error = max(0.0, min(1.0, p_error))
 		
 		local_faulty_channel = build_gate_faulty_channel(ideal_unitary, p_error, num_qubits=len(gate.qubits))
@@ -477,6 +523,88 @@ def circuit_to_faulty_channel(
 		# Compose with existing channel
 		channel = compose_superoperators(expanded_faulty_channel, channel)
 	
+	return channel
+
+
+def circuit_to_faulty_channel_model(
+	circuit: CircuitList,
+	*,
+	error_rates: dict[int, float] | None = None,
+	gate_error_rates: dict[str, float] | None = None,
+	num_qubits: int | None = None,
+	noise_type: str = "depolarizing",
+) -> np.ndarray:
+	"""Build the faulty circuit channel using a chosen per-gate noise model.
+
+	noise_type: one of 'depolarizing', 'dephasing', 'thermal' (amplitude-damping).
+	"""
+	if num_qubits is None:
+		num_qubits = max((qubit for gate in circuit.gates for qubit in gate.qubits), default=-1) + 1
+		num_qubits = max(num_qubits, len(circuit.cluster), 1)
+	else:
+		num_qubits = max(int(num_qubits), 1)
+
+	if error_rates is None:
+		error_rates = {}
+
+	logical_qubits = list(circuit.cluster) if circuit.cluster else sorted({qubit for gate in circuit.gates for qubit in gate.qubits})
+	if not logical_qubits:
+		logical_qubits = list(range(num_qubits))
+	qubit_map = {qubit: index for index, qubit in enumerate(logical_qubits[:num_qubits])}
+
+	dimension = 2**num_qubits
+	channel = np.eye(dimension * dimension, dtype=np.complex128)
+
+	for _, gate in sorted(enumerate(circuit.gates), key=lambda entry: (entry[1].depth, entry[0]), reverse=True):
+		if len(gate.qubits) == 1:
+			ideal_unitary = _single_qubit_matrix(gate.name, gate.parameters)
+		elif len(gate.qubits) == 2:
+			ideal_unitary = _two_qubit_matrix(gate.name)
+		else:
+			raise ValueError(f"Unsupported gate arity: {gate.name} with qubits={gate.qubits}")
+
+		p_error = sum(error_rates.get(q, 0.0) for q in gate.qubits) / max(len(gate.qubits), 1)
+		if gate_error_rates is not None:
+			gate_factor = float(gate_error_rates.get(gate.name.lower().strip(), 0.0))
+			p_error *= gate_factor
+		p_error = max(0.0, min(1.0, p_error))
+
+		# Select Kraus set based on noise_type
+		if noise_type == "depolarizing":
+			if ideal_unitary.shape[0] == 2:
+				local_kraus = depolarizing_kraus_matrices(p_error)
+			else:
+				single = depolarizing_kraus_matrices(p_error)
+				local_kraus = [np.kron(a, b) for a in single for b in single]
+		elif noise_type == "dephasing":
+			if ideal_unitary.shape[0] == 2:
+				local_kraus = dephasing_kraus_matrices(p_error)
+			else:
+				single = dephasing_kraus_matrices(p_error)
+				local_kraus = [np.kron(a, b) for a in single for b in single]
+		elif noise_type in ("thermal", "amplitude_damping"):
+			if ideal_unitary.shape[0] == 2:
+				local_kraus = amplitude_damping_kraus_matrices(p_error)
+			else:
+				single = amplitude_damping_kraus_matrices(p_error)
+				local_kraus = [np.kron(a, b) for a in single for b in single]
+		else:
+			raise ValueError(f"Unsupported noise_type: {noise_type}")
+
+		# Expand local ideal unitary and build expanded ideal channel
+		remapped_qubits = tuple(qubit_map.get(q, int(q) % num_qubits) for q in gate.qubits)
+		expanded_ideal_unitary = _expand_operator(ideal_unitary, remapped_qubits, num_qubits)
+		expanded_ideal_channel = unitary_to_superoperator(expanded_ideal_unitary)
+
+		if p_error > 0.0 and local_kraus:
+			expanded_kraus = [_expand_operator(K, remapped_qubits, num_qubits) for K in local_kraus]
+			expanded_depol_superop = kraus_to_superoperator(expanded_kraus)
+			expanded_faulty_channel = expanded_depol_superop @ expanded_ideal_channel
+		else:
+			expanded_faulty_channel = expanded_ideal_channel
+
+		channel = compose_superoperators(expanded_faulty_channel, channel)
+
 	return channel
 
 

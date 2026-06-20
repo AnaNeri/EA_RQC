@@ -256,11 +256,36 @@ def evolutionary_best_circuit(
 	noise_model: Any,
 	samples: SampleTarget | None = None,
 	seed: int | None = None,
+	initial_population: list[CircuitList] | None = None,
 ) -> CircuitEvolutionResult:
 	rng = _as_rng(seed)
 	candidate_clusters = _normalise_candidate_clusters(config)
 	candidate_weights = _cluster_choice_weights(candidate_clusters, config.candidate_cluster_weights)
-	population = _build_initial_population(config, gate_catalog, rng)
+	# Allow callers to provide a seeded initial population. If provided,
+	# use it as the starting population and fill up with random circuits
+	# to reach `config.population_size`.
+	if initial_population:
+		population = [c.clone() for c in initial_population[: config.population_size]]
+		# Fill remaining slots with random circuits
+		while len(population) < config.population_size:
+			cluster = _pick_cluster(
+				rng,
+				candidate_clusters=candidate_clusters,
+				candidate_weights=candidate_weights,
+				device_qubits=config.device_qubits,
+				cluster_size=config.cluster_size,
+			)
+			population.append(
+				random_circuit(
+					cluster=cluster,
+					max_depth=config.max_depth,
+					max_gates=config.max_gates,
+					gate_catalog=gate_catalog,
+					seed=rng.randrange(2**32),
+				)
+			)
+	else:
+		population = _build_initial_population(config, gate_catalog, rng)
 
 	effective_target_kind = config.target_kind
 	effective_target_matrix = target_matrix

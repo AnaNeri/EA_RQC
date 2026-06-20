@@ -3,7 +3,6 @@
 Usage:
   python -m demo                # runs circuit_demo by default
   python -m demo.circuit_demo   # run specific demo module
-  python -m demo --entangle     # run entangling demo
 """
 from __future__ import annotations
 
@@ -18,9 +17,10 @@ def _discover_demos() -> List[Tuple[str, str]]:
         "circuit_demo",
         "circuit_demo_entangling",
         "circuit_demo_grover_oracle",
+        "circuit_demo_qpc_identities",
         "circuit_demo_qpc_approximation",
         "circuit_demo_qpc_correction_priority",
-        "circuit_demo_qpc_critical_qubits",
+        "circuit_demo_qpc_protective_scaffold",
         "circuit_demo_qpc_error_correction",
         "circuit_demo_qpc_x_vs_hzh",
         "map_demo",
@@ -84,11 +84,6 @@ def main(argv: List[str] | None = None) -> None:
         if key in names:
             _run_demo_by_module(key)
             return
-        # support legacy flag --entangle
-        if key in ("--entangle", "entangle") and "circuit_demo_entangling" in names:
-            _run_demo_by_module("circuit_demo_entangling")
-            return
-
         print(f"Unknown demo '{key}'. Use --list to see available demos.")
         return
 

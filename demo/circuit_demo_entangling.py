@@ -122,16 +122,16 @@ def _print_transpile_comparison(best_circuit: CircuitList, target: CircuitList, 
 
     # Baseline: what Qiskit gives when it optimizes the intended target circuit.
     qiskit_baseline = transpile(target_qc, basis_gates=gate_catalog, optimization_level=3)
-    # Candidate: your evolved circuit, normalized through the same transpiler settings.
-    evolved_transpiled = transpile(best_qc, basis_gates=gate_catalog, optimization_level=3)
-
+    # Note: do NOT transpile the evolved EA circuit. Keep the EA circuit as-is
+    # and use its declared metadata for depth/size/2q counts.
     baseline_depth = qiskit_baseline.depth()
     baseline_size = qiskit_baseline.size()
     baseline_2q = _two_qubit_gate_count(qiskit_baseline)
 
-    evolved_depth = evolved_transpiled.depth()
-    evolved_size = evolved_transpiled.size()
-    evolved_2q = _two_qubit_gate_count(evolved_transpiled)
+    # Use localized_best (CircuitList) metadata instead of a transpiled qc
+    evolved_depth = max((gate.depth for gate in localized_best.gates), default=0)
+    evolved_size = len(localized_best.gates)
+    evolved_2q = sum(1 for gate in localized_best.gates if len(gate.qubits) == 2)
 
     depth_delta = evolved_depth - baseline_depth
     size_delta = evolved_size - baseline_size
@@ -151,17 +151,43 @@ def _print_transpile_comparison(best_circuit: CircuitList, target: CircuitList, 
     )
 
     baseline_unitary = Operator(qiskit_baseline).data
-    evolved_unitary = Operator(evolved_transpiled).data
-    baseline_fidelity = fidelity_similarity(baseline_unitary, target_matrix)
-    evolved_fidelity = fidelity_similarity(evolved_unitary, target_matrix)
-    baseline_frobenius = frobenius_similarity(baseline_unitary, target_matrix)
-    evolved_frobenius = frobenius_similarity(evolved_unitary, target_matrix)
 
-    print(
-        "Semantic (vs target matrix): "
-        f"baseline fidelity={baseline_fidelity:.4f}, evolved fidelity={evolved_fidelity:.4f}; "
-        f"baseline frobenius_sim={baseline_frobenius:.4f}, evolved frobenius_sim={evolved_frobenius:.4f}"
-    )
+    # IMPORTANT: do NOT transpile the evolved circuit here — compare the
+    # Qiskit-transpiled baseline to the EA-produced unitary as-is.
+    evolved_unitary = circuit_to_matrix(localized_best, target_kind="unitary")
+
+    # A = Qiskit-transpiled target (what Qiskit would run)
+    A = baseline_unitary
+    # B = EA-evolved unitary (as produced by the evolution, not transpiled)
+    B = evolved_unitary
+
+    # Compare A vs target and B vs target
+    a_fid = fidelity_similarity(A, target_matrix)
+    b_fid = fidelity_similarity(B, target_matrix)
+    a_frob = frobenius_similarity(A, target_matrix)
+    b_frob = frobenius_similarity(B, target_matrix)
+
+    print("\nSemantic comparisons to target:")
+    print(f" A (transpiled target)    -> fidelity={a_fid:.4f}, frobenius_sim={a_frob:.4f}")
+    print(f" B (EA-evolved unitary) -> fidelity={b_fid:.4f}, frobenius_sim={b_frob:.4f}")
+
+    # Indicate which is better for each metric
+    if a_fid > b_fid:
+        fid_winner = "A (transpiled target)"
+    elif b_fid > a_fid:
+        fid_winner = "B (EA-evolved unitary)"
+    else:
+        fid_winner = "tie"
+
+    if a_frob > b_frob:
+        frob_winner = "A (transpiled target)"
+    elif b_frob > a_frob:
+        frob_winner = "B (EA-evolved unitary)"
+    else:
+        frob_winner = "tie"
+
+    print(f" Better (fidelity): {fid_winner}")
+    print(f" Better (frobenius): {frob_winner}")
 
 
 def run_experiment(
