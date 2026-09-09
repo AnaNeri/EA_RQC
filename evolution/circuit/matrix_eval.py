@@ -193,8 +193,6 @@ def _expand_superoperator(local_superop: np.ndarray, qubits: Sequence[int], num_
 	
 	# For now, use a simple approach: convert to unitary, expand, convert back
 	# This is not the most efficient, but preserves correctness
-	local_dim = 2**len(qubits)
-	
 	# Approximate: use Kronecker structure
 	# Identity on non-affected qubits
 	left_qubits = qubits[0]
@@ -472,8 +470,6 @@ def circuit_to_faulty_channel(
 			gate_factor = float(gate_error_rates.get(gate.name.lower().strip(), 0.0))
 			p_error *= gate_factor
 		p_error = max(0.0, min(1.0, p_error))
-		
-		local_faulty_channel = build_gate_faulty_channel(ideal_unitary, p_error, num_qubits=len(gate.qubits))
 		
 		# Expand to full system: convert faulty channel (superop) to unitary form, expand, convert back
 		# This is a workaround: we extract the "canonical" unitary from the channel

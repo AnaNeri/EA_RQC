@@ -1,0 +1,3 @@
+include LICENSE README.md CITATION.cff pyproject.toml uv.lock
+recursive-include demo *.py *.md
+recursive-include tests *.py

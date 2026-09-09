@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use EA-RQC, please cite this software."
+title: "EA-RQC: Evolutionary Algorithm for Robust Quantum Circuits"
+authors:
+  - family-names: Neri
+    given-names: Ana
+version: 0.1.0
+date-released: 2026-09-08
+repository-code: "https://github.com/AnaNeri/EA_RQC"
+license: MIT
+type: software
+abstract: >-
+  EA-RQC searches for robust qubit clusters and quantum circuits on noisy
+  quantum hardware using evolutionary algorithms and QPC-aware fitness.
+keywords:
+  - quantum circuits
+  - evolutionary algorithms
+  - quantum noise
+  - quantum error correction
+  - probabilistic combinator

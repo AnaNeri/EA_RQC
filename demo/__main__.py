@@ -23,6 +23,7 @@ def _discover_demos() -> List[Tuple[str, str]]:
         "circuit_demo_qpc_protective_scaffold",
         "circuit_demo_qpc_error_correction",
         "circuit_demo_qpc_x_vs_hzh",
+        "circuit_demo_quantamorphism_protection",
         "map_demo",
     ]
     demos: List[Tuple[str, str]] = []

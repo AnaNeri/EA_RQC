@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 
 from circuit.entities.circuit_graph import CircuitGraph
 from circuit.entities.circuit_list import CircuitGate, CircuitList
-from demo.utils import DemoNoiseModel, load_fake_kyiv_device_data
+from demo.utils import load_fake_kyiv_device_data
 from evolution.cluster.evolutionary import evolutionary_best_clusters
 from evolution.circuit.evolutionary import CircuitEvolutionConfig, evolutionary_best_circuit
 from evolution.circuit.fitness import fitness_circuit
@@ -75,7 +74,6 @@ def main() -> None:
     # Delegate to run_experiment() for structured results and keep CLI behavior
     results = run_experiment()
     # Print same human-readable outputs for CLI
-    noise_model = results.get("noise_model")
     gate_catalog = results.get("gate_catalog")
     mapping = results.get("mapping")
     print(f"Noise model source: {results.get('backend_name')}")

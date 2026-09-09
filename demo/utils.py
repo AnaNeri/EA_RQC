@@ -151,7 +151,7 @@ def circuit_to_png_bytes(circuit) -> bytes:
     # number of logical qubits
     nq = 0
     for g in localized.gates:
-        nq = max(nq, max(localized_qubits := g.qubits) if g.qubits else 0)
+        nq = max(nq, max(g.qubits) if g.qubits else 0)
     # safer: compute max qubit index
     max_q = 0
     for g in localized.gates:

@@ -6,7 +6,6 @@ with minimal accuracy loss for small error rates.
 
 from __future__ import annotations
 
-import numpy as np
 from dataclasses import dataclass
 
 from circuit.entities.circuit_list import CircuitList

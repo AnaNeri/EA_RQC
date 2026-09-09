@@ -22,7 +22,7 @@ test = ["pytest>=8.0"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["circuit*", "evolution*", "adapters*"]
+include = ["circuit*", "evolution*", "adapters*", "demo*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

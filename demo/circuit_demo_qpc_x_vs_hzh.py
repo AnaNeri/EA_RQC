@@ -7,7 +7,6 @@ Shows that QPC-aware fitness guides search toward shorter, noise-resilient circu
 from __future__ import annotations
 
 from dataclasses import dataclass
-import numpy as np
 
 from circuit.entities.circuit_list import CircuitGate, CircuitList
 from evolution.circuit.evolutionary import (

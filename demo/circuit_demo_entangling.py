@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from typing import Any
 import numpy as np
 
 from circuit.entities.circuit_list import CircuitGate, CircuitList
-from adapters.qiskit import parse_qiskit_backend_gate_catalog, parse_qiskit_backend_noise_model
-from demo.utils import DemoNoiseModel, load_fake_kyiv_device_data
+from demo.utils import load_fake_kyiv_device_data
 from evolution.cluster.evolutionary import evolutionary_best_clusters
 from evolution.circuit.evolutionary import CircuitEvolutionConfig, evolutionary_best_circuit
 from evolution.circuit.fitness import fitness_circuit
@@ -118,8 +116,6 @@ def _print_transpile_comparison(best_circuit: CircuitList, target: CircuitList, 
 
     target_qc = _to_qiskit_circuit(target)
     localized_best = _localize_circuit(best_circuit)
-    best_qc = _to_qiskit_circuit(localized_best)
-
     # Baseline: what Qiskit gives when it optimizes the intended target circuit.
     qiskit_baseline = transpile(target_qc, basis_gates=gate_catalog, optimization_level=3)
     # Note: do NOT transpile the evolved EA circuit. Keep the EA circuit as-is

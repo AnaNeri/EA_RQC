@@ -12,10 +12,7 @@ from .matrix_eval import (
 	apply_channel_to_state,
 	circuit_to_matrix,
 	circuit_to_faulty_channel,
-	fidelity_similarity,
-	frobenius_similarity,
 	infer_num_qubits_from_matrix,
-	mix_channels,
 	partial_trace_density_matrix,
 	state_fidelity,
 	subsystem_similarity,
@@ -138,7 +135,6 @@ def _behavior_score_with_qpc(
 		gate_error_rates = getattr(noise_model, "gate_error_rates", None)
 	
 	# Ideal channel
-	ideal_unitary = circuit_to_matrix(circuit, target_kind="unitary", num_qubits=num_qubits)
 	ideal_channel = circuit_to_matrix(circuit, target_kind="channel", num_qubits=num_qubits)
 	
 	qpc_distance = 0.0

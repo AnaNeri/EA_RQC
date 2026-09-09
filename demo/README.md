@@ -16,6 +16,13 @@ Optional (for tests):
 uv sync --extra test
 ```
 
+The demos are included in the installed package and can also be run outside a repository checkout:
+
+```bash
+python -m demo --list
+python -m demo.map_demo
+```
+
 ## Run Demos
 
 You can list demos through the menu entrypoint:
@@ -225,4 +232,6 @@ uv run -m demo.map_demo
 ## Notes
 
 - All commands should be run from the repository root.
+- The demos are included in the installed package.
+- The test suite is available from the repository and source distribution, but is not included in the wheel.
 - If a demo uses optional Qiskit functionality, ensure dependencies are installed by `uv sync`.
